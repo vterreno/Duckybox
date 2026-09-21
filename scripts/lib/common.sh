@@ -188,7 +188,8 @@ duckybox_setup_mate_vpn_applet() {
   duckybox_log "${tag}" "VPN Command applet added to the top panel"
 }
 
-# KDE: install the plasmoid and pin it to the first panel when Plasma is live.
+# KDE: install the plasmoid and place it just to the right of the system tray
+# (wifi / bluetooth / …), so the VPN label sits with the status cluster.
 duckybox_setup_kde_vpn_plasmoid() {
   local tag="$1" repo_root="$2" home_dir="${3:-${HOME}}"
   local src="${repo_root}/configs/kde/plasmoids/org.duckybox.vpn"
@@ -207,31 +208,196 @@ duckybox_setup_kde_vpn_plasmoid() {
   local qdbus=""
   qdbus="$(command -v qdbus6 || command -v qdbus || command -v qdbus-qt6 || true)"
   if [[ -z "${qdbus}" ]] || ! pgrep -x plasmashell >/dev/null 2>&1; then
-    duckybox_log "${tag}" "Plasma not running; add 'Duckybox VPN' to the panel after login"
+    duckybox_log "${tag}" "Plasma not running; add 'Duckybox VPN' beside the system tray after login"
     return 0
   fi
 
   local script result
   script='
-var found = 0;
-for (var i = 0; i < panelIds.length; i++) {
-    var panel = panelById(panelIds[i]);
-    for (var j = 0; j < panel.widgetIds.length; j++) {
-        var w = panel.widgetById(panel.widgetIds[j]);
-        if (w.type === "org.duckybox.vpn") { found++; }
+var vpn = null;
+var tray = null;
+var panel = null;
+var panels = panels();
+for (var i = 0; i < panels.length; i++) {
+    var p = panels[i];
+    var widgets = p.widgets();
+    var hasTray = false;
+    var localVpn = null;
+    for (var j = 0; j < widgets.length; j++) {
+        var w = widgets[j];
+        if (w.type === "org.kde.plasma.systemtray") {
+            hasTray = true;
+            if (!tray) { tray = w; panel = p; }
+        }
+        if (w.type === "org.duckybox.vpn") {
+            localVpn = w;
+        }
+    }
+    if (localVpn) {
+        vpn = localVpn;
+        if (hasTray) { panel = p; }
     }
 }
-if (found === 0 && panelIds.length > 0) {
-    var p = panelById(panelIds[0]);
-    p.addWidget("org.duckybox.vpn");
-    print("added");
+if (!panel && panels.length > 0) {
+    panel = panels[0];
+}
+if (!panel) {
+    print("no-panel");
 } else {
-    print("present:" + found);
+    if (!vpn) {
+        vpn = panel.addWidget("org.duckybox.vpn");
+        print("added");
+    } else {
+        print("present");
+    }
+    if (vpn && tray) {
+        // Place immediately to the right of the system tray (wifi, bt, …).
+        var target = tray.index + 1;
+        if (vpn.index !== target) {
+            vpn.index = target;
+            print("index:" + vpn.index + " after-tray:" + tray.index);
+        } else {
+            print("index-ok:" + vpn.index);
+        }
+    } else if (vpn) {
+        print("no-tray");
+    }
 }
 '
   result="$("${qdbus}" org.kde.plasmashell /PlasmaShell \
     org.kde.PlasmaShell.evaluateScript "${script}" 2>/dev/null || true)"
   duckybox_log "${tag}" "VPN plasmoid: ${result:-no response}"
+}
+
+# KDE: set System Tray → Clipboard to Disabled (drop it from extra/shown/hidden).
+duckybox_disable_kde_clipboard() {
+  local tag="$1" home_dir="${2:-${HOME}}"
+  local clipboard_id="org.kde.plasma.clipboard"
+  local qdbus=""
+  qdbus="$(command -v qdbus6 || command -v qdbus || command -v qdbus-qt6 || true)"
+  local live_ok=0
+
+  if [[ -n "${qdbus}" ]] && pgrep -x plasmashell >/dev/null 2>&1; then
+    local script result
+    script='
+var id = "org.kde.plasma.clipboard";
+function without(list, drop) {
+    var parts = String(list || "").length ? String(list).split(",") : [];
+    var out = [];
+    for (var i = 0; i < parts.length; i++) {
+        var e = parts[i].replace(/^\s+|\s+$/g, "");
+        if (!e || e === drop) continue;
+        out.push(e);
+    }
+    return out.join(",");
+}
+var changed = 0;
+var panels = panels();
+for (var i = 0; i < panels.length; i++) {
+    var widgets = panels[i].widgets();
+    for (var j = 0; j < widgets.length; j++) {
+        var w = widgets[j];
+        if (w.type !== "org.kde.plasma.systemtray") continue;
+        w.currentConfigGroup = ["General"];
+        var extra = String(w.readConfig("extraItems", ""));
+        var shown = String(w.readConfig("shownItems", ""));
+        var hidden = String(w.readConfig("hiddenItems", ""));
+        var nextExtra = without(extra, id);
+        var nextShown = without(shown, id);
+        var nextHidden = without(hidden, id);
+        if (nextExtra !== extra || nextShown !== shown || nextHidden !== hidden) {
+            w.writeConfig("extraItems", nextExtra);
+            w.writeConfig("shownItems", nextShown);
+            w.writeConfig("hiddenItems", nextHidden);
+            w.reloadConfig();
+            changed++;
+        }
+    }
+}
+print("clipboard-disabled:" + changed);
+'
+    result="$("${qdbus}" org.kde.plasmashell /PlasmaShell \
+      org.kde.PlasmaShell.evaluateScript "${script}" 2>/dev/null || true)"
+    if grep -qE 'clipboard-disabled:[0-9]+' <<<"${result}"; then
+      duckybox_log "${tag}" "Clipboard set to Disabled in the system tray (${result})"
+      live_ok=1
+    else
+      duckybox_log "${tag}" "Plasma script returned: ${result:-no response}; trying config file"
+    fi
+  fi
+
+  local cfg="${home_dir}/.config/plasma-org.kde.plasma.desktop-appletsrc"
+  if [[ ! -f "${cfg}" ]]; then
+    (( live_ok == 1 )) && return 0
+    duckybox_log "${tag}" "No Plasma panel config yet; clipboard will be disabled after first login"
+    return 0
+  fi
+
+  # File fallback: under each systemtray applet's General group, strip clipboard
+  # from extraItems / shownItems / hiddenItems (Disabled = absent from extraItems).
+  local tmp
+  tmp="$(mktemp)"
+  awk -v drop="${clipboard_id}" '
+    BEGIN { is_tray=0 }
+    /^\[/ {
+      if ($0 ~ /^\[Containments\]\[[0-9]+\]\[Applets\]\[[0-9]+\]$/) {
+        is_tray=0
+      } else if ($0 !~ /^\[Containments\]\[[0-9]+\]\[Applets\]\[[0-9]+\]/) {
+        is_tray=0
+      }
+    }
+    /^plugin=org\.kde\.plasma\.systemtray$/ { is_tray=1 }
+    is_tray && /^(extraItems|shownItems|hiddenItems)=/ {
+      key = $0; sub(/=.*/, "", key)
+      raw = $0; sub(/^[^=]*=/, "", raw)
+      n = split(raw, parts, ",")
+      out = ""
+      for (i = 1; i <= n; i++) {
+        entry = parts[i]
+        gsub(/^[ \t]+|[ \t]+$/, "", entry)
+        if (entry == "" || entry == drop) continue
+        out = out (out==""?"":",") entry
+      }
+      print key "=" out
+      next
+    }
+    { print }
+  ' "${cfg}" > "${tmp}"
+
+  if cmp -s "${cfg}" "${tmp}"; then
+    rm -f "${tmp}"
+    (( live_ok == 1 )) || duckybox_log "${tag}" "Clipboard already Disabled (or no system tray in ${cfg})"
+    return 0
+  fi
+
+  local restarted=0
+  if (( live_ok == 0 )) && pgrep -x plasmashell >/dev/null 2>&1; then
+    local quit
+    quit="$(command -v kquitapp6 || command -v kquitapp5 || command -v kquitapp || true)"
+    if [[ -n "${quit}" ]]; then
+      "${quit}" plasmashell >/dev/null 2>&1 || true
+    else
+      pkill -x plasmashell 2>/dev/null || true
+    fi
+    local waited=0
+    while pgrep -x plasmashell >/dev/null 2>&1 && (( waited < 24 )); do
+      sleep 0.5
+      waited=$((waited + 1))
+    done
+    if ! pgrep -x plasmashell >/dev/null 2>&1; then
+      restarted=1
+      duckybox_log "${tag}" "Stopped plasmashell to disable the clipboard tray entry"
+    fi
+  fi
+
+  duckybox_backup "${cfg}"
+  mv -f "${tmp}" "${cfg}"
+  duckybox_log "${tag}" "Clipboard Disabled in ${cfg}"
+
+  if (( restarted == 1 )); then
+    (setsid plasmashell >/dev/null 2>&1 &) || true
+    duckybox_log "${tag}" "Restarted plasmashell"
+  fi
 }
 
 # Single workspace instead of Parrot's default four virtual desktops.

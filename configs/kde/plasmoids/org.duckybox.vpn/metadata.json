@@ -11,7 +11,7 @@
         "Id": "org.duckybox.vpn",
         "License": "GPL-3.0+",
         "Name": "Duckybox VPN",
-        "Version": "1.1",
+        "Version": "1.2",
         "Website": "https://github.com/vterreno/Turfbox"
     },
     "X-Plasma-API-Minimum-Version": "6.0",

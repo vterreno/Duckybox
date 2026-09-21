@@ -502,7 +502,8 @@ Applied automatically:
   - Keyboard layout and inverted scroll direction
   - Wallpaper from /usr/share/backgrounds/duckybox
   - Animations and Baloo indexing disabled (compositing kept for kitty opacity)
-  - VPN indicator in the top panel (tray + Plasma 6 plasmoid)
+  - VPN indicator in the top panel (tray + Plasma 6 plasmoid beside the system tray)
+  - Clipboard entry Disabled in the system tray
   - A single virtual desktop (Parrot's default four are removed)
 
 If the panel still looks stock, log out and back in: Plasma caches its
@@ -541,6 +542,7 @@ main() {
   duckybox_disable_conky_vpn "${HOME_DIR}"
   duckybox_setup_vpn_tray kde "${HOME_DIR}"
   duckybox_setup_kde_vpn_plasmoid kde "${REPO_ROOT}" "${HOME_DIR}"
+  duckybox_disable_kde_clipboard kde "${HOME_DIR}"
   duckybox_set_single_workspace_kde kde
   write_notes
   reload_session
