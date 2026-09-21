@@ -298,3 +298,211 @@ duckybox_setup_kitty() {
   mkdir -p "${home_dir}/.config"
   printf 'kitty.desktop\n' > "${home_dir}/.config/xdg-terminals.list"
 }
+
+# True when a launcher URL points at a stock terminal (not kitty).
+duckybox_is_stock_terminal_launcher() {
+  local url
+  url="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+  case "${url}" in
+    *kitty*) return 1 ;;
+  esac
+  case "${url}" in
+    *preferred://terminal*|*konsole*|*mate-terminal*|*gnome.terminal*|*gnome-terminal* \
+    |*x-terminal-emulator*|*xfce4-terminal*|*qterminal*|*alacritty*|*xterm.desktop* \
+    |*utilities-terminal*|*org.kde.plasma.konsole*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+# MATE: point any panel launcher that opens a stock terminal at kitty instead.
+duckybox_pin_kitty_mate_panel() {
+  local tag="$1" home_dir="${2:-${HOME}}"
+  command -v dconf >/dev/null 2>&1 || {
+    duckybox_log "${tag}" "dconf missing; cannot retarget panel terminal launchers"
+    return 0
+  }
+
+  local kitty_desktop=""
+  if [[ -f /usr/share/applications/kitty.desktop ]]; then
+    kitty_desktop="/usr/share/applications/kitty.desktop"
+  elif [[ -f "${home_dir}/.local/share/applications/kitty.desktop" ]]; then
+    kitty_desktop="${home_dir}/.local/share/applications/kitty.desktop"
+  else
+    duckybox_log "${tag}" "kitty.desktop not found; panel launchers left alone"
+    return 0
+  fi
+
+  local obj loc changed=0
+  for obj in $(dconf list /org/mate/panel/objects/ 2>/dev/null); do
+    obj="${obj%/}"
+    [[ -n "${obj}" ]] || continue
+    loc="$(dconf read "/org/mate/panel/objects/${obj}/launcher-location" 2>/dev/null || true)"
+    loc="${loc#\'}"
+    loc="${loc%\'}"
+    [[ -n "${loc}" ]] || continue
+    if duckybox_is_stock_terminal_launcher "${loc}"; then
+      dconf write "/org/mate/panel/objects/${obj}/launcher-location" \
+        "'${kitty_desktop}'" 2>/dev/null || true
+      changed=$((changed + 1))
+    fi
+  done
+
+  if (( changed > 0 )); then
+    duckybox_log "${tag}" "Retargeted ${changed} panel launcher(s) from terminal to kitty"
+  else
+    duckybox_log "${tag}" "No stock terminal launchers found in the MATE panel"
+  fi
+}
+
+# KDE: unpin stock terminals from Icons-Only / Task Manager and pin kitty.
+# Prefers the live Plasma scripting API; falls back to editing appletsrc with
+# plasmashell stopped so the write is not overwritten on exit.
+duckybox_pin_kitty_kde_taskbar() {
+  local tag="$1" home_dir="${2:-${HOME}}"
+  local qdbus=""
+  qdbus="$(command -v qdbus6 || command -v qdbus || command -v qdbus-qt6 || true)"
+  local cfg="${home_dir}/.config/plasma-org.kde.plasma.desktop-appletsrc"
+
+  if [[ -n "${qdbus}" ]] && pgrep -x plasmashell >/dev/null 2>&1; then
+    local script result
+    script='
+var terminalRe = /(preferred:\/\/terminal|konsole|mate-terminal|gnome[.-]terminal|x-terminal-emulator|xfce4-terminal|qterminal|alacritty|xterm\.desktop|utilities-terminal)/i;
+var kittyRe = /kitty/i;
+var taskRe = /org\.kde\.plasma\.(icontasks|taskmanager)/;
+var changed = 0;
+var seen = 0;
+for (var i = 0; i < panelIds.length; i++) {
+    var panel = panelById(panelIds[i]);
+    for (var j = 0; j < panel.widgetIds.length; j++) {
+        var widget = panel.widgetById(panel.widgetIds[j]);
+        if (!taskRe.test(widget.type)) continue;
+        seen++;
+        widget.currentConfigGroup = ["General"];
+        var raw = String(widget.readConfig("launchers", ""));
+        var parts = raw.length ? raw.split(",") : [];
+        var out = [];
+        var hasKitty = false;
+        for (var k = 0; k < parts.length; k++) {
+            var entry = parts[k].replace(/^\s+|\s+$/g, "");
+            if (!entry) continue;
+            if (kittyRe.test(entry)) {
+                if (!hasKitty) {
+                    out.push("applications:kitty.desktop");
+                    hasKitty = true;
+                }
+                continue;
+            }
+            if (terminalRe.test(entry)) {
+                if (!hasKitty) {
+                    out.push("applications:kitty.desktop");
+                    hasKitty = true;
+                }
+                continue;
+            }
+            out.push(entry);
+        }
+        if (!hasKitty) out.unshift("applications:kitty.desktop");
+        var next = out.join(",");
+        if (next !== raw) {
+            widget.writeConfig("launchers", next);
+            widget.reloadConfig();
+            changed++;
+        }
+    }
+}
+print("taskbars:" + seen + " changed:" + changed);
+'
+    result="$("${qdbus}" org.kde.plasmashell /PlasmaShell \
+      org.kde.PlasmaShell.evaluateScript "${script}" 2>/dev/null || true)"
+    if grep -qE 'changed:[1-9]' <<<"${result}"; then
+      duckybox_log "${tag}" "Taskbar: unpinned stock terminal, pinned kitty (${result})"
+      return 0
+    fi
+    if grep -qE 'taskbars:[1-9].*changed:0' <<<"${result}"; then
+      duckybox_log "${tag}" "Taskbar already pins kitty (${result})"
+      return 0
+    fi
+    duckybox_log "${tag}" "Plasma script returned: ${result:-no response}; trying config file"
+  fi
+
+  if [[ ! -f "${cfg}" ]]; then
+    duckybox_log "${tag}" "No Plasma panel config yet; kitty will pin after first login"
+    return 0
+  fi
+
+  local tmp restarted=0
+  tmp="$(mktemp)"
+  awk '
+    BEGIN { is_task=0 }
+    /^\[/ {
+      if ($0 ~ /^\[Containments\]\[[0-9]+\]\[Applets\]\[[0-9]+\]$/) {
+        is_task=0
+      } else if ($0 !~ /^\[Containments\]\[[0-9]+\]\[Applets\]\[[0-9]+\]/) {
+        is_task=0
+      }
+    }
+    /^plugin=org\.kde\.plasma\.(icontasks|taskmanager)/ { is_task=1 }
+    is_task && /^launchers=/ {
+      raw = substr($0, 11)
+      n = split(raw, parts, ",")
+      out = ""
+      has = 0
+      for (i = 1; i <= n; i++) {
+        entry = parts[i]
+        gsub(/^[ \t]+|[ \t]+$/, "", entry)
+        if (entry == "") continue
+        low = tolower(entry)
+        if (low ~ /kitty/) {
+          if (!has) { out = out (out==""?"":",") "applications:kitty.desktop"; has=1 }
+          continue
+        }
+        if (low ~ /preferred:\/\/terminal|konsole|mate-terminal|gnome[.-]terminal|x-terminal-emulator|xfce4-terminal|qterminal|alacritty|xterm\.desktop|utilities-terminal/) {
+          if (!has) { out = out (out==""?"":",") "applications:kitty.desktop"; has=1 }
+          continue
+        }
+        out = out (out==""?"":",") entry
+      }
+      if (!has) out = (out=="" ? "applications:kitty.desktop" : "applications:kitty.desktop," out)
+      print "launchers=" out
+      next
+    }
+    { print }
+  ' "${cfg}" > "${tmp}"
+
+  if cmp -s "${cfg}" "${tmp}"; then
+    rm -f "${tmp}"
+    duckybox_log "${tag}" "No task-manager launchers to rewrite in ${cfg}"
+    return 0
+  fi
+
+  # Editing while plasmashell runs loses the write when it flushes on exit.
+  if pgrep -x plasmashell >/dev/null 2>&1; then
+    local quit
+    quit="$(command -v kquitapp6 || command -v kquitapp5 || command -v kquitapp || true)"
+    if [[ -n "${quit}" ]]; then
+      "${quit}" plasmashell >/dev/null 2>&1 || true
+    else
+      pkill -x plasmashell 2>/dev/null || true
+    fi
+    local waited=0
+    while pgrep -x plasmashell >/dev/null 2>&1 && (( waited < 24 )); do
+      sleep 0.5
+      waited=$((waited + 1))
+    done
+    if ! pgrep -x plasmashell >/dev/null 2>&1; then
+      restarted=1
+      duckybox_log "${tag}" "Stopped plasmashell to pin kitty on the taskbar"
+    fi
+  fi
+
+  duckybox_backup "${cfg}"
+  mv -f "${tmp}" "${cfg}"
+  duckybox_log "${tag}" "Taskbar launchers rewritten in ${cfg}"
+
+  if (( restarted == 1 )); then
+    (setsid plasmashell >/dev/null 2>&1 &) || true
+    duckybox_log "${tag}" "Restarted plasmashell"
+  fi
+}

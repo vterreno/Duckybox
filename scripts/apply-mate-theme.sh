@@ -81,6 +81,7 @@ apply_terminal() {
       < "${REPO_ROOT}/configs/terminal/mate-terminal.dconf" || true
   fi
   duckybox_setup_kitty mate "${REPO_ROOT}" "${HOME_DIR}"
+  duckybox_pin_kitty_mate_panel mate "${HOME_DIR}"
 
   # Kitty transparency needs a compositor. Keep animations off for speed.
   if command -v gsettings >/dev/null 2>&1; then

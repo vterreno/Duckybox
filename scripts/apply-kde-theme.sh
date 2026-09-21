@@ -435,6 +435,7 @@ apply_konsole() {
 
 apply_kitty() {
   duckybox_setup_kitty kde "${REPO_ROOT}" "${HOME_DIR}"
+  duckybox_pin_kitty_kde_taskbar kde "${HOME_DIR}"
 }
 
 apply_input() {
@@ -497,10 +498,11 @@ Applied automatically:
   - Application launcher icon set to the Duckybox duck
   - Konsole profile "Duckybox" (fallback)
   - Kitty as the default terminal (violet palette, 82% opacity)
+  - Taskbar: stock terminal unpinned, kitty pinned in its place
   - Keyboard layout and inverted scroll direction
   - Wallpaper from /usr/share/backgrounds/duckybox
   - Animations and Baloo indexing disabled (compositing kept for kitty opacity)
-  - VPN indicator in the top panel (tray + optional plasmoid)
+  - VPN indicator in the top panel (tray + Plasma 6 plasmoid)
   - A single virtual desktop (Parrot's default four are removed)
 
 If the panel still looks stock, log out and back in: Plasma caches its

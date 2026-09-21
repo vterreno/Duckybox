@@ -1,16 +1,16 @@
-import QtQuick 2.15
-import org.kde.plasma.plasmoid 2.0
-import org.kde.plasma.components 3.0 as PlasmaComponents
-import org.kde.plasma.plasma5support 2.0 as Plasma5Support
+import QtQuick
+import org.kde.plasma.plasmoid
+import org.kde.plasma.components as PlasmaComponents
+import org.kde.plasma.plasma5support as Plasma5Support
 
-Item {
+PlasmoidItem {
     id: root
 
     property string vpnText: "VPN …"
 
-    Plasmoid.preferredRepresentation: Plasmoid.fullRepresentation
-    Plasmoid.toolTipMainText: "Duckybox VPN"
-    Plasmoid.toolTipSubText: root.vpnText
+    preferredRepresentation: fullRepresentation
+    toolTipMainText: "Duckybox VPN"
+    toolTipSubText: root.vpnText
 
     fullRepresentation: PlasmaComponents.Label {
         id: label
