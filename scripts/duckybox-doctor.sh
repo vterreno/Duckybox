@@ -105,6 +105,28 @@ else
   printf '  [FAIL] overlay not running\n'
 fi
 
+section "Login screen"
+dm=""
+if [[ -L /etc/systemd/system/display-manager.service ]]; then
+  dm="$(basename "$(readlink -f /etc/systemd/system/display-manager.service)" .service)"
+fi
+printf '  display manager: %s\n' "${dm:-unknown}"
+printf '  session type now: %s\n' "${XDG_SESSION_TYPE:-unknown}"
+case "${dm}" in
+  sddm)
+    check "sddm duckybox config" test -f /etc/sddm.conf.d/99-duckybox.conf
+    check "sddm breeze background" \
+      grep -q duckybox /usr/share/sddm/themes/breeze/theme.conf.user
+    if [[ -r /var/lib/sddm/state.conf ]]; then
+      printf '  sddm last session: %s\n' \
+        "$(sed -n 's/^Session=//p' /var/lib/sddm/state.conf | head -n1)"
+    fi
+    ;;
+  lightdm)
+    check "lightdm duckybox config" test -f /etc/lightdm/lightdm.conf.d/99-duckybox.conf
+    ;;
+esac
+
 section "Branding"
 # hicolor is what makes Icon=duckybox resolve under any icon theme.
 check "duck icon in hicolor" test -f /usr/share/icons/hicolor/48x48/apps/duckybox.png

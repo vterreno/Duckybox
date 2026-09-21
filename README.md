@@ -10,7 +10,7 @@ Brand violet `#4B0E8F` · accent `#7C3AED` · backdrop `#12071F`
 |---|---|
 | GRUB | Violet menu with the duck background and a violet timeout bar |
 | Plymouth | The duck mark alone on deep violet, static by default |
-| LightDM | Greeter background, Duckybox GTK theme and violet icons |
+| Login screen | LightDM greeter or SDDM, whichever the machine actually uses, with the duck background |
 | MATE | `Duckybox` GTK theme (GTK2/3/4 plus `metacity-1` for Marco), violet Papirus icons, Plank dock, duck wallpaper picked by resolution |
 | KDE Plasma | `Duckybox` colour scheme with violet titlebars, Papirus-Dark violet icons, Konsole profile, same wallpaper |
 | VPN | `tun0` address in the top-right corner via conky, on either desktop |
@@ -44,7 +44,15 @@ Neither variant draws a spinner or throbber, so if you see one, it belongs to an
 
 ## X11 versus Wayland
 
-The installer makes the Plasma **X11** session the LightDM default, because Wayland breaks three things: Peek does not work at all, the conky VPN overlay needs X11, and KWin ignores the compositing switch. Wayland stays available at the login screen; only the default changes. Pass `--keep-wayland` to leave the default alone.
+The installer makes the Plasma **X11** session the default, because Wayland breaks three things: Peek does not work at all, the conky VPN overlay needs X11, and KWin ignores the compositing switch. Wayland stays available at the login screen; only the default changes. Pass `--keep-wayland` to leave the default alone.
+
+How the default is set depends on the display manager, which is detected from the `display-manager.service` systemd alias rather than assumed. LightDM takes a `user-session` in `/etc/lightdm/lightdm.conf.d/99-duckybox.conf`. SDDM has no equivalent setting for interactive logins, so the installer seeds the session it remembers per user in `/var/lib/sddm/state.conf`.
+
+## Why the theme applies at your next login
+
+On Plasma, applying the theme during install is not enough on its own. The running session keeps its configuration in memory and writes it back out as the session ends, so a reboot right after installing can undo everything the installer wrote. That is why the desktop used to come up stock and needed a manual re-run.
+
+The installer now leaves a one-shot autostart entry that re-applies the theme about ten seconds into your next login, from inside a real session, and then deletes itself. Plasma's panel restarts when that happens, so expect a brief flash. Its log is at `~/.cache/duckybox-first-login.log`, and `/opt/duckybox/apply-desktop.sh` re-applies at any time.
 
 ## Tools installed
 
@@ -52,7 +60,7 @@ The installer makes the Plasma **X11** session the LightDM default, because Wayl
 
 ## Requirements
 
-- Parrot OS Security or Home with **MATE** or **KDE Plasma**, and **LightDM**
+- Parrot OS Security or Home with **MATE** or **KDE Plasma**, behind **LightDM** or **SDDM**
 - root via `sudo`
 - Network for `apt`, the GTK theme build, Obsidian and Docker images
 - **amd64** for Obsidian and SysReptor. On arm64 both are skipped with a `WARN`: the Obsidian `.deb` is amd64-only and the SysReptor images are not built for arm64. Everything else, including the GTK theme build, works on arm64.

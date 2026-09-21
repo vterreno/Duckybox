@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# Duckybox — Parrot OS MATE customizer (Pwnbox-style, violet theme)
+# Duckybox — Parrot OS customizer (Pwnbox-style, violet theme)
 #
-# Themes the whole visual chain: GRUB -> Plymouth -> LightDM -> MATE desktop,
+# Themes the whole visual chain: GRUB -> Plymouth -> login screen -> desktop,
 # plus tmux, the bash prompt, a VPN indicator and a few working tools.
+# Both desktops are supported (MATE and KDE Plasma) and both display managers
+# (LightDM and SDDM); everything is detected rather than assumed.
 #
 # Usage: sudo ./install.sh [options]
 
@@ -952,12 +954,56 @@ EOF
   log_ok "GRUB theme installed"
 }
 
+# Which display manager actually runs the login screen. Parrot's MATE editions
+# use LightDM and the KDE edition uses SDDM, so assuming LightDM meant the
+# greeter and the default session were silently left untouched on Plasma.
+DISPLAY_MANAGER=""
+
+detect_display_manager() {
+  local dm=""
+
+  # The systemd alias is authoritative: it is the unit that will actually start.
+  if [[ -L /etc/systemd/system/display-manager.service ]]; then
+    dm="$(basename "$(readlink -f /etc/systemd/system/display-manager.service)" .service)"
+  fi
+  # Debian's own record, used when the alias is missing.
+  if [[ -z "${dm}" && -r /etc/X11/default-display-manager ]]; then
+    dm="$(basename "$(cat /etc/X11/default-display-manager)" 2>/dev/null || true)"
+  fi
+  # Last resort: whatever is running.
+  if [[ -z "${dm}" ]]; then
+    local candidate
+    for candidate in sddm lightdm gdm3; do
+      if pgrep -x "${candidate}" >/dev/null 2>&1; then
+        dm="${candidate}"
+        break
+      fi
+    done
+  fi
+
+  DISPLAY_MANAGER="${dm}"
+  if [[ -n "${DISPLAY_MANAGER}" ]]; then
+    log_info "Display manager: ${DISPLAY_MANAGER}"
+  else
+    log_warn "Could not identify the display manager; the login screen may stay stock"
+  fi
+}
+
 setup_greeter() {
-  log_info "Theming the LightDM greeter"
   if [[ "${DRY_RUN}" -eq 1 ]]; then
     return 0
   fi
+  case "${DISPLAY_MANAGER}" in
+    sddm) setup_sddm; return 0 ;;
+    lightdm) ;;
+    "") log_warn "No display manager detected; skipping login screen theming"; return 0 ;;
+    *)
+      log_warn "${DISPLAY_MANAGER} is not supported; login screen left stock"
+      return 0
+      ;;
+  esac
 
+  log_info "Theming the LightDM greeter"
   if [[ ! -d /etc/lightdm ]]; then
     log_warn "/etc/lightdm not found; skipping greeter theming"
     return 0
@@ -987,8 +1033,66 @@ setup_greeter() {
   fi
 }
 
+setup_sddm() {
+  log_info "Theming the SDDM login screen"
+
+  local login_bg="${BG_DIR}/duckybox-login.jpg"
+  if [[ ! -f "${login_bg}" ]]; then
+    log_warn "Login background missing: ${login_bg}; SDDM left stock"
+    return 0
+  fi
+
+  # Breeze ships with Plasma, and theme.conf.user is its documented override
+  # file, so the background survives package upgrades that rewrite theme.conf.
+  local theme="breeze"
+  local theme_dir="/usr/share/sddm/themes/${theme}"
+  if [[ ! -d "${theme_dir}" ]]; then
+    log_warn "SDDM theme ${theme} not installed; leaving the current theme alone"
+    return 0
+  fi
+
+  cat > "${theme_dir}/theme.conf.user" <<EOF
+# Duckybox — override file for the Breeze SDDM theme.
+[General]
+type=image
+background=${login_bg}
+needsFullUserModel=false
+EOF
+
+  mkdir -p /etc/sddm.conf.d
+  cat > /etc/sddm.conf.d/99-duckybox.conf <<EOF
+# Duckybox — sourced after the distro's own sddm.conf.d snippets.
+[Theme]
+Current=${theme}
+CursorTheme=breeze_cursors
+EOF
+  log_ok "SDDM themed with the Duckybox login background"
+}
+
+# SDDM has no "default session" setting for interactive logins; it remembers the
+# last one per user in its state file, so that is what has to be seeded.
+sddm_default_session() {
+  local session_file="$1"
+  local state=/var/lib/sddm/state.conf
+
+  [[ -d /var/lib/sddm ]] || mkdir -p /var/lib/sddm
+  if [[ -f "${state}" && ! -f "${state}.duckybox.bak" ]]; then
+    cp -a "${state}" "${state}.duckybox.bak"
+  fi
+  cat > "${state}" <<EOF
+[Last]
+User=${TARGET_USER}
+Session=${session_file}
+EOF
+  # SDDM runs as its own user and will not read a file it cannot own.
+  if id sddm >/dev/null 2>&1; then
+    chown -R sddm:sddm /var/lib/sddm 2>/dev/null || true
+  fi
+  log_ok "SDDM will preselect $(basename "${session_file}") for ${TARGET_USER}"
+}
+
 # Peek needs X11, conky needs X11, and KWin only honours the compositing and
-# effects settings on X11. Make the Plasma X11 session the LightDM default.
+# effects settings on X11. Make the Plasma X11 session the default.
 setup_x11_session() {
   if [[ "${KEEP_WAYLAND}" -eq 1 ]]; then
     log_info "Leaving the default session alone (--keep-wayland)"
@@ -998,11 +1102,11 @@ setup_x11_session() {
     log_debug "No Plasma installed; nothing to switch"
     return 0
   fi
-  if [[ ! -d /etc/lightdm ]]; then
-    log_warn "LightDM not found; set the X11 session manually at the login screen"
+  if [[ "${DRY_RUN}" -eq 1 ]]; then
     return 0
   fi
-  if [[ "${DRY_RUN}" -eq 1 ]]; then
+  if [[ -z "${DISPLAY_MANAGER}" ]]; then
+    log_warn "No display manager detected; pick the X11 session manually at login"
     return 0
   fi
 
@@ -1031,15 +1135,27 @@ setup_x11_session() {
     return 0
   fi
 
-  mkdir -p /etc/lightdm/lightdm.conf.d
-  cat > /etc/lightdm/lightdm.conf.d/99-duckybox.conf <<EOF
+  # Everything under /usr/share/xsessions is X11 by definition; the Wayland
+  # session lives in /usr/share/wayland-sessions and is deliberately not chosen.
+  case "${DISPLAY_MANAGER}" in
+    lightdm)
+      mkdir -p /etc/lightdm/lightdm.conf.d
+      cat > /etc/lightdm/lightdm.conf.d/99-duckybox.conf <<EOF
 # Duckybox — default to Plasma on X11. Wayland breaks Peek, the conky VPN
 # overlay and KWin's compositing switch. Pick Wayland at the login screen
 # whenever you need it; this only sets the default.
 [Seat:*]
 user-session=${session}
 EOF
-  log_ok "Default session set to ${session} (X11)"
+      log_ok "Default session set to ${session} (X11)"
+      ;;
+    sddm)
+      sddm_default_session "/usr/share/xsessions/${session}.desktop"
+      ;;
+    *)
+      log_warn "${DISPLAY_MANAGER}: cannot set the default session; pick ${session} at login"
+      ;;
+  esac
 }
 
 apply_desktop_as_user() {
@@ -1065,11 +1181,108 @@ apply_desktop_as_user() {
     log_info "Applying the ${desktop} desktop theme as ${TARGET_USER}"
     sudo -u "${TARGET_USER}" -H \
       DUCKYBOX_OPT="${OPT_DIR}" \
-      DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-}" \
+      ${USER_SESSION_ENV[@]+"${USER_SESSION_ENV[@]}"} \
       bash "${apply}" \
       || log_warn "${desktop} theming returned non-zero (a graphical session may be required)"
   done
   log_ok "Desktop theming finished"
+}
+
+# Environment needed to talk to the user's running graphical session. sudo wipes
+# all of it, and every Plasma tool (plasma-apply-colorscheme, qdbus, xrandr,
+# plasmashell --replace) fails silently without it, which left only raw config
+# file writes -- and those are lost when plasmashell rewrites its config from
+# memory as the session ends.
+USER_SESSION_ENV=()
+
+detect_user_session_env() {
+  USER_SESSION_ENV=()
+  local uid
+  uid="$(id -u "${TARGET_USER}" 2>/dev/null || true)"
+  [[ -n "${uid}" ]] || return 0
+
+  # The systemd user bus is at a predictable path, no guessing needed.
+  if [[ -S "/run/user/${uid}/bus" ]]; then
+    USER_SESSION_ENV+=(
+      "XDG_RUNTIME_DIR=/run/user/${uid}"
+      "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/${uid}/bus"
+    )
+  fi
+
+  # DISPLAY and XAUTHORITY only exist inside the session, so read them back out
+  # of a process that is already in it.
+  local name pid environ value
+  for name in plasmashell plasma_session ksmserver kwin_x11 mate-session marco; do
+    pid="$(pgrep -u "${TARGET_USER}" -x "${name}" 2>/dev/null | head -n1)"
+    [[ -n "${pid}" ]] || continue
+    environ="/proc/${pid}/environ"
+    [[ -r "${environ}" ]] || continue
+
+    value="$(tr '\0' '\n' < "${environ}" | sed -n 's/^DISPLAY=//p' | head -n1)"
+    [[ -n "${value}" ]] || continue
+    USER_SESSION_ENV+=("DISPLAY=${value}")
+
+    value="$(tr '\0' '\n' < "${environ}" | sed -n 's/^XAUTHORITY=//p' | head -n1)"
+    [[ -n "${value}" ]] && USER_SESSION_ENV+=("XAUTHORITY=${value}")
+
+    value="$(tr '\0' '\n' < "${environ}" | sed -n 's/^XDG_SESSION_TYPE=//p' | head -n1)"
+    [[ -n "${value}" ]] && USER_SESSION_ENV+=("XDG_SESSION_TYPE=${value}")
+
+    log_info "Found ${TARGET_USER}'s session via ${name} (pid ${pid})"
+    break
+  done
+
+  if [[ "${#USER_SESSION_ENV[@]}" -eq 0 ]]; then
+    log_info "No live session for ${TARGET_USER}; the theme will apply at next login"
+  fi
+}
+
+# Applying the theme from the installer is not enough on Plasma: the session
+# that is running when you install rewrites its own config as it ends, so a
+# reboot can undo everything. Re-apply once at the next login, from inside a
+# real session, and then get out of the way.
+install_first_login_hook() {
+  if [[ "${#DESKTOPS[@]:-0}" -eq 0 ]]; then
+    return 0
+  fi
+  if [[ "${DRY_RUN}" -eq 1 ]]; then
+    return 0
+  fi
+
+  local marker="${TARGET_HOME}/.config/autostart/duckybox-first-login.desktop"
+
+  cat > "${OPT_DIR}/first-login.sh" <<EOF
+#!/usr/bin/env bash
+# Duckybox — runs once at the first login after install, then removes itself.
+set -uo pipefail
+
+# Plasma is still starting up: its tools are not on the bus yet, and applying
+# too early means plasmashell overwrites the config right after.
+sleep 10
+
+mkdir -p "\${HOME}/.cache"
+"${OPT_DIR}/apply-desktop.sh" >>"\${HOME}/.cache/duckybox-first-login.log" 2>&1
+
+# Removed whether or not that succeeded: retrying every login would restart the
+# panel every login. Read the log above if the desktop still looks stock.
+rm -f "${marker}"
+EOF
+  chmod 755 "${OPT_DIR}/first-login.sh"
+
+  mkdir -p "${TARGET_HOME}/.config/autostart"
+  cat > "${marker}" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Duckybox first-login theming
+Comment=Applies the Duckybox desktop theme once, then removes itself
+Exec=${OPT_DIR}/first-login.sh
+Icon=duckybox
+Terminal=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+EOF
+  chown -R "${TARGET_USER}:${TARGET_USER}" "${TARGET_HOME}/.config/autostart" 2>/dev/null || true
+  log_ok "The theme will re-apply automatically at your next login"
 }
 
 # ---------------------------------------------------------------------------
@@ -1083,6 +1296,8 @@ main() {
   require_parrot
   detect_user
   detect_desktops
+  detect_display_manager
+  detect_user_session_env
 
   install_base_packages
   install_desktop_packages
@@ -1101,6 +1316,7 @@ main() {
   setup_greeter
   setup_x11_session
   apply_desktop_as_user
+  install_first_login_hook
 
   log_ok "=== Duckybox install complete ==="
   local themed="${DESKTOPS[*]:-none}"
@@ -1114,9 +1330,10 @@ Next steps:
   2. At the login screen confirm the session is Plasma on X11 (now the
      default). Wayland breaks Peek, the conky VPN overlay and KWin's
      compositing switch.
-  3. Log in. Colours, icons, wallpaper and the VPN overlay in the top-right
-     corner apply on their own. Plasma rewrites its config when a session
-     ends, so if something looks stock, log out and back in once.
+  3. Log in and wait about ten seconds. The theme re-applies itself once from
+     inside the session, because Plasma rewrites its config as a session ends
+     and would otherwise undo what the installer just wrote. Plasma restarts
+     its panel when that happens; that flash is expected.
   4. Connect OpenVPN (tun0) to see the address appear top-right and in the
      shell prompt.
   5. Apps: Flameshot, Peek, Obsidian, SysReptor (http://127.0.0.1:8000/).
