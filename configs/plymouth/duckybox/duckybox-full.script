@@ -1,4 +1,7 @@
-# Duckybox Plymouth script — deep violet backdrop, duck mark, violet progress bar
+# duckybox-style: full
+#
+# Duckybox Plymouth script — deep violet backdrop, duck mark fading in, violet
+# progress bar. The static duck-only variant lives in duckybox-minimal.script.
 
 Window.SetBackgroundTopColor(0.110, 0.043, 0.180);    # #1C0B2E
 Window.SetBackgroundBottomColor(0.071, 0.027, 0.122); # #12071F

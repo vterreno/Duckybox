@@ -40,6 +40,21 @@ kwrite() {
   "${KWRITE}" --file "$1" --group "$2" --key "$3" "$4" 2>/dev/null || true
 }
 
+kwrite_nested() {
+  # kwrite_nested <file> <group>... -- <key> <value>
+  # Applet settings live several groups deep, which the single-group helper
+  # above cannot reach.
+  [[ -n "${KWRITE}" ]] || return 0
+  local file="$1"; shift
+  local -a groups=()
+  while [[ $# -gt 0 && "$1" != "--" ]]; do
+    groups+=(--group "$1")
+    shift
+  done
+  shift # past the --
+  "${KWRITE}" --file "${file}" "${groups[@]}" --key "$1" "$2" 2>/dev/null || true
+}
+
 install_color_scheme() {
   log "Installing the Duckybox color scheme"
   local dest="${HOME_DIR}/.local/share/color-schemes"
@@ -74,6 +89,63 @@ apply_icons_and_style() {
   cp -f "${REPO_ROOT}/configs/gtk/gtk-3.0/gtk.css" "${HOME_DIR}/.config/gtk-3.0/gtk.css"
   cp -f "${REPO_ROOT}/configs/gtk/gtk-3.0/settings.ini" "${HOME_DIR}/.config/gtk-3.0/settings.ini"
   cp -f "${REPO_ROOT}/configs/gtk/gtk-4.0/gtk.css" "${HOME_DIR}/.config/gtk-4.0/gtk.css"
+}
+
+# Print "<containment> <applet>" for every application launcher in the panel.
+# The ids are assigned when the panel is built, so they have to be read from
+# the config rather than assumed.
+find_launcher_applets() {
+  awk '
+    /^\[/ {
+      if ($0 ~ /^\[Containments\]\[[0-9]+\]\[Applets\]\[[0-9]+\]$/) {
+        c = $0; sub(/^\[Containments\]\[/, "", c); sub(/\].*$/, "", c)
+        a = $0; sub(/^\[Containments\]\[[0-9]+\]\[Applets\]\[/, "", a); sub(/\]$/, "", a)
+        cur_c = c; cur_a = a
+      } else {
+        cur_c = ""; cur_a = ""
+      }
+      next
+    }
+    /^plugin=org\.kde\.plasma\.(kickoff|kicker|kickerdash)$/ {
+      if (cur_c != "") print cur_c, cur_a
+    }
+  ' "$1"
+}
+
+apply_launcher_icon() {
+  local cfg="${HOME_DIR}/.config/plasma-org.kde.plasma.desktop-appletsrc"
+  if [[ ! -f "${cfg}" ]]; then
+    log "No panel config yet; re-run after the first Plasma login for the menu icon"
+    return 0
+  fi
+
+  # Parrot's launcher points at a Parrot-branded icon name that Papirus-Dark
+  # does not carry, so switching icon themes leaves it as a generic file. Name
+  # our own icon explicitly instead of relying on the theme having it.
+  local containment applet count=0
+  while read -r containment applet; do
+    [[ -n "${containment}" ]] || continue
+    if (( count == 0 )); then
+      duckybox_backup "${cfg}"
+    fi
+    kwrite_nested "${cfg}" \
+      Containments "${containment}" Applets "${applet}" Configuration General \
+      -- icon duckybox
+    log "Menu icon set on containment ${containment}, applet ${applet}"
+    count=$((count + 1))
+  done < <(find_launcher_applets "${cfg}")
+
+  if (( count == 0 )); then
+    log "No application launcher found in the panel; menu icon left alone"
+    return 0
+  fi
+
+  # plasmashell holds this config in memory and rewrites it when it exits, so
+  # an edit made mid-session is lost unless it re-reads from disk.
+  if pgrep -x plasmashell >/dev/null 2>&1; then
+    log "Restarting plasmashell so it picks up the new icon"
+    (setsid plasmashell --replace >/dev/null 2>&1 &) || true
+  fi
 }
 
 apply_window_decorations() {
@@ -180,6 +252,7 @@ Duckybox on KDE Plasma
 Applied automatically:
   - Colour scheme "Duckybox" (violet accent #7C3AED, violet titlebars)
   - Icons: Papirus-Dark with violet folders
+  - Application launcher icon set to the Duckybox duck
   - Konsole profile "Duckybox"
   - Wallpaper from /usr/share/backgrounds/duckybox
   - Compositing, animations and Baloo indexing disabled
@@ -213,6 +286,7 @@ main() {
   install_color_scheme
   apply_icons_and_style
   apply_window_decorations
+  apply_launcher_icon
   tune_performance
   apply_wallpaper
   apply_konsole

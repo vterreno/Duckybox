@@ -255,9 +255,14 @@ make_icons() {
   local out="${REPO_ROOT}/assets/icons"
   mkdir -p "${out}"
   log "Rendering menu icon set"
-  local size
+  # The mark is trimmed to its content, so scaling it straight to the box makes
+  # the duck touch every edge and read as clipped. Panels and menus add no
+  # padding of their own, so leave the margin here.
+  local size inner
   for size in 16 22 24 32 48 64 128 256; do
-    im "${MARK}" -background none -resize "${size}x${size}" \
+    inner=$(( size * 84 / 100 ))
+    (( inner > 0 )) || inner="${size}"
+    im "${MARK}" -background none -resize "${inner}x${inner}" \
       -gravity center -extent "${size}x${size}" \
       "${out}/duckybox-${size}.png"
   done

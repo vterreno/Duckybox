@@ -105,20 +105,30 @@ else
   printf '  [FAIL] overlay not running\n'
 fi
 
+section "Branding"
+# hicolor is what makes Icon=duckybox resolve under any icon theme.
+check "duck icon in hicolor" test -f /usr/share/icons/hicolor/48x48/apps/duckybox.png
+appletsrc="${HOME}/.config/plasma-org.kde.plasma.desktop-appletsrc"
+if [[ -f "${appletsrc}" ]]; then
+  if grep -q '^icon=duckybox$' "${appletsrc}"; then
+    printf '  plasma menu icon: duckybox\n'
+  else
+    printf '  plasma menu icon: not set to duckybox (log out and back in?)\n'
+  fi
+fi
+
 section "Boot chain"
 check "Plymouth theme dir" test -d /usr/share/plymouth/themes/duckybox
 check "Plymouth logo" test -f /usr/share/plymouth/themes/duckybox/logo.png
 if command -v plymouth-set-default-theme >/dev/null 2>&1; then
   printf '  active plymouth theme: %s\n' "$(plymouth-set-default-theme 2>/dev/null)"
 fi
-# The style is whichever variant install.sh copied into place.
+# Each variant carries a "duckybox-style:" marker, so the installed style can be
+# reported without guessing from its contents.
 ply_script=/usr/share/plymouth/themes/duckybox/duckybox.script
 if [[ -f "${ply_script}" ]]; then
-  if grep -q 'logo.png' "${ply_script}"; then
-    printf '  splash style: full (animated duck)\n'
-  else
-    printf '  splash style: minimal (progress bar only)\n'
-  fi
+  printf '  splash style: %s\n' \
+    "$(sed -n 's/^# duckybox-style: *//p' "${ply_script}" | head -n1)"
 fi
 printf '  kernel cmdline: %s\n' \
   "$(grep -E '^GRUB_CMDLINE_LINUX_DEFAULT=' /etc/default/grub 2>/dev/null | cut -d= -f2-)"

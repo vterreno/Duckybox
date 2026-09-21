@@ -9,7 +9,7 @@ Brand violet `#4B0E8F` · accent `#7C3AED` · backdrop `#12071F`
 | Stage | What you get |
 |---|---|
 | GRUB | Violet menu with the duck background and a violet timeout bar |
-| Plymouth | A thin violet progress bar low on the screen, no animation by default |
+| Plymouth | The duck mark alone on deep violet, static by default |
 | LightDM | Greeter background, Duckybox GTK theme and violet icons |
 | MATE | `Duckybox` GTK theme (GTK2/3/4 plus `metacity-1` for Marco), violet Papirus icons, Plank dock, duck wallpaper picked by resolution |
 | KDE Plasma | `Duckybox` colour scheme with violet titlebars, Papirus-Dark violet icons, Konsole profile, same wallpaper |
@@ -34,8 +34,8 @@ On KDE: KWin compositing off (X11 only), animation duration factor zero, blur an
 
 The stage between GRUB and the login screen has three styles, picked with `--plymouth`:
 
-- **`minimal`** (default) — a thin violet progress bar low on the screen, nothing above it and no animation.
-- **`full`** — the duck mark fades in over the violet backdrop, then the bar fills.
+- **`minimal`** (default) — the duck mark alone, centred and static on the violet backdrop. No progress bar, no fade, no text.
+- **`full`** — the duck fades in, then a violet progress bar fills below it.
 - **`none`** — no splash at all. Removes `quiet splash` from the kernel command line so the boot shows kernel and systemd messages. Other kernel parameters are preserved.
 
 Switching is a re-run, never a file edit: `sudo ./install.sh --plymouth full`. Both variants live in `configs/plymouth/duckybox/` and the installer copies the chosen one to `duckybox.script`.

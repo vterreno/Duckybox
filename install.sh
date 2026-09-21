@@ -84,8 +84,8 @@ Options:
   --session WHICH    Desktop to theme: auto (default), mate, kde, both, none
   --keep-wayland     Do not make Plasma X11 the default LightDM session
   --plymouth STYLE   Boot splash between GRUB and the login screen:
-                       minimal (default)  progress bar only, no animation
-                       full               duck mark fading in, then the bar
+                       minimal (default)  the duck alone, static, nothing else
+                       full               duck fading in plus a progress bar
                        none               no splash at all, plain text boot
   --skip-obsidian    Do not download/install Obsidian
   --skip-sysreptor   Do not install Docker / SysReptor
@@ -585,11 +585,45 @@ install_wallpapers() {
   if [[ -f "${REPO_ROOT}/assets/greeter/duckybox-login.jpg" ]]; then
     cp -f "${REPO_ROOT}/assets/greeter/duckybox-login.jpg" "${BG_DIR}/duckybox-login.jpg"
   fi
-  mkdir -p "${ICON_DIR}"
-  if compgen -G "${REPO_ROOT}/assets/icons/*.png" >/dev/null; then
-    cp -f "${REPO_ROOT}/assets/icons/"*.png "${ICON_DIR}/"
-  fi
   log_ok "Wallpapers in ${BG_DIR}"
+}
+
+install_icons() {
+  log_info "Installing the Duckybox icon"
+  if [[ "${DRY_RUN}" -eq 1 ]]; then
+    return 0
+  fi
+
+  # A flat directory of duckybox-<size>.png files is not an icon theme, so
+  # Icon=duckybox would never resolve and every launcher fell back to the
+  # generic file icon. hicolor is the mandatory fallback theme in the
+  # freedesktop spec: installing there makes the name resolve under any active
+  # theme, Papirus-Dark included.
+  local size src dest installed=0
+  for size in 16 22 24 32 48 64 128 256; do
+    src="${REPO_ROOT}/assets/icons/duckybox-${size}.png"
+    [[ -f "${src}" ]] || continue
+    dest="/usr/share/icons/hicolor/${size}x${size}/apps"
+    mkdir -p "${dest}"
+    cp -f "${src}" "${dest}/duckybox.png"
+    installed=$((installed + 1))
+  done
+
+  if (( installed == 0 )); then
+    log_warn "No icons in assets/icons; run scripts/generate-brand.sh"
+    return 0
+  fi
+
+  # Keep the originals somewhere stable for the places that want an absolute
+  # path rather than an icon name.
+  mkdir -p "${ICON_DIR}"
+  cp -f "${REPO_ROOT}/assets/icons/"*.png "${ICON_DIR}/" 2>/dev/null || true
+
+  # Without a cache refresh the new icon stays invisible to Qt and GTK.
+  if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+    gtk-update-icon-cache -f -t /usr/share/icons/hicolor >/dev/null 2>&1 || true
+  fi
+  log_ok "Icon installed at ${installed} sizes in hicolor"
 }
 
 install_gtk_theme() {
@@ -987,6 +1021,7 @@ main() {
   regen_brand_assets
   deploy_opt
   install_wallpapers
+  install_icons
   install_gtk_theme
   install_plank_theme
   configure_tmux

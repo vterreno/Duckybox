@@ -1,8 +1,8 @@
-# Duckybox Plymouth script, minimal variant.
+# duckybox-style: minimal
 #
-# No logo and no animation: just a thin violet progress bar low on the screen
-# over the Duckybox backdrop. This is the quiet handoff from GRUB to the login
-# screen. The animated variant lives in duckybox-full.script.
+# Duckybox Plymouth script, minimal variant: the duck mark alone, centred and
+# static, over the Duckybox backdrop. No progress bar, no fade, no text. The
+# animated variant with the progress bar lives in duckybox-full.script.
 
 Window.SetBackgroundTopColor(0.110, 0.043, 0.180);    # #1C0B2E
 Window.SetBackgroundBottomColor(0.071, 0.027, 0.122); # #12071F
@@ -10,44 +10,22 @@ Window.SetBackgroundBottomColor(0.071, 0.027, 0.122); # #12071F
 screen_width = Window.GetWidth();
 screen_height = Window.GetHeight();
 
-bar_bg.image = Image("progress_bg.png");
-bar_fg.image = Image("progress_fg.png");
-bar_bg.sprite = Sprite(bar_bg.image);
-bar_fg.sprite = Sprite();
+logo.image = Image("logo.png");
+logo.sprite = Sprite(logo.image);
+logo.x = screen_width / 2 - logo.image.GetWidth() / 2;
+logo.y = screen_height / 2 - logo.image.GetHeight() / 2;
+logo.sprite.SetX(logo.x);
+logo.sprite.SetY(logo.y);
+logo.sprite.SetOpacity(1);
 
-bar.x = screen_width / 2 - bar_bg.image.GetWidth() / 2;
-bar.y = screen_height * 0.82;
-bar_bg.sprite.SetX(bar.x);
-bar_bg.sprite.SetY(bar.y);
-bar_fg.sprite.SetX(bar.x);
-bar_fg.sprite.SetY(bar.y);
-
-global.max_progress = 0.0;
-
-fun update_progress_bar(progress) {
-  if (progress < 0.0) progress = 0.0;
-  if (progress > 1.0) progress = 1.0;
-
-  # Never let the bar travel backwards
-  if (progress < global.max_progress) progress = global.max_progress;
-  global.max_progress = progress;
-
-  width = bar_fg.image.GetWidth() * progress;
-  if (width < 1) width = 1;
-
-  bar_fg.sprite.SetImage(bar_fg.image.Scale(width, bar_fg.image.GetHeight()));
-}
-
-fun progress_callback(duration, progress) {
-  update_progress_bar(progress);
-}
-
-# Disk unlock prompt, still needed on encrypted installs.
+# Disk unlock prompt, still needed on encrypted installs. It is the one thing
+# allowed to appear besides the duck, because without it the boot would stall
+# with no way to know a passphrase is wanted.
 fun display_password_callback(prompt, bullets) {
   prompt_text.image = Image.Text(prompt, 0.93, 0.91, 1.0);
   prompt_text.sprite = Sprite(prompt_text.image);
   prompt_text.sprite.SetX(screen_width / 2 - prompt_text.image.GetWidth() / 2);
-  prompt_text.sprite.SetY(bar.y - 80);
+  prompt_text.sprite.SetY(logo.y + logo.image.GetHeight() + 60);
 
   bullet.image = Image("bullet.png");
   total_width = bullets * (bullet.image.GetWidth() + 6);
@@ -56,7 +34,7 @@ fun display_password_callback(prompt, bullets) {
   for (i = 0; i < bullets; i++) {
     dot[i].sprite = Sprite(bullet.image);
     dot[i].sprite.SetX(start_x + i * (bullet.image.GetWidth() + 6));
-    dot[i].sprite.SetY(bar.y - 44);
+    dot[i].sprite.SetY(logo.y + logo.image.GetHeight() + 100);
   }
 }
 
@@ -65,6 +43,5 @@ fun display_normal_callback() {
   dot = NULL;
 }
 
-Plymouth.SetBootProgressFunction(progress_callback);
 Plymouth.SetDisplayPasswordFunction(display_password_callback);
 Plymouth.SetDisplayNormalFunction(display_normal_callback);
