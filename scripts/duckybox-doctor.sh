@@ -105,6 +105,28 @@ else
   printf '  [FAIL] overlay not running\n'
 fi
 
+section "Keyboard and mouse"
+if [[ -r /etc/default/keyboard ]]; then
+  printf '  /etc/default/keyboard XKBLAYOUT: %s\n' \
+    "$(sed -n 's/^XKBLAYOUT=//p' /etc/default/keyboard | tr -d '"' | head -n1)"
+fi
+if command -v setxkbmap >/dev/null 2>&1; then
+  printf '  active layout: %s\n' \
+    "$(setxkbmap -query 2>/dev/null | sed -n 's/^layout: *//p' | head -n1)"
+fi
+check "x11 input snippet" test -f /etc/X11/xorg.conf.d/99-duckybox-input.conf
+if command -v xinput >/dev/null 2>&1; then
+  # Report the live property, which is the thing that actually decides.
+  for devid in $(xinput list --id-only 2>/dev/null); do
+    devprops="$(xinput list-props "${devid}" 2>/dev/null)" || continue
+    printf '%s' "${devprops}" | grep -q 'Natural Scrolling Enabled (' || continue
+    printf '  %s: natural scrolling = %s\n' \
+      "$(xinput list --name-only "${devid}" 2>/dev/null | head -n1)" \
+      "$(printf '%s\n' "${devprops}" \
+        | sed -n 's/.*Natural Scrolling Enabled ([0-9]*):[[:space:]]*//p' | head -n1)"
+  done
+fi
+
 section "Docker / SysReptor"
 if command -v docker >/dev/null 2>&1; then
   docker_ver="$(docker --version 2>&1 | head -n1)"

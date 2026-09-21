@@ -18,6 +18,51 @@ duckybox_backup() {
   fi
 }
 
+# Keyboard layout chosen at install time. Read from disk rather than passed in,
+# so re-running an apply script by hand uses the same layout as the install did.
+duckybox_keyboard_layout() {
+  local conf="${DUCKYBOX_OPT:-/opt/duckybox}/input.conf"
+  local layout=""
+  if [[ -r "${conf}" ]]; then
+    layout="$(sed -n 's/^KEYBOARD_LAYOUT=//p' "${conf}" | head -n1)"
+  fi
+  printf '%s' "${layout:-latam}"
+}
+
+# Pointing devices that can invert their scroll direction, one per line as
+# "<xinput id>|<vendor>|<product>|<name>". Only libinput devices expose the
+# property, so testing for it is both the filter and the capability check.
+duckybox_pointer_devices() {
+  command -v xinput >/dev/null 2>&1 || return 0
+  local id props name ids vendor product
+  for id in $(xinput list --id-only 2>/dev/null); do
+    props="$(xinput list-props "${id}" 2>/dev/null)" || continue
+    printf '%s' "${props}" | grep -q 'Natural Scrolling Enabled' || continue
+
+    name="$(xinput list --name-only "${id}" 2>/dev/null | head -n1)"
+    # Reported as "Device Product ID (275):\t1133, 49271"
+    ids="$(printf '%s\n' "${props}" \
+      | sed -n 's/.*Device Product ID ([0-9]*):[[:space:]]*//p' | head -n1)"
+    vendor="${ids%%,*}"
+    product="${ids##*,}"
+    vendor="${vendor// /}"
+    product="${product// /}"
+
+    [[ -n "${name}" && -n "${vendor}" && -n "${product}" ]] || continue
+    printf '%s|%s|%s|%s\n' "${id}" "${vendor}" "${product}" "${name}"
+  done
+}
+
+# Invert scrolling in the running session, so it takes effect without a logout.
+duckybox_invert_scroll_live() {
+  command -v xinput >/dev/null 2>&1 || return 0
+  local id
+  while IFS='|' read -r id _ _ _; do
+    [[ -n "${id}" ]] || continue
+    xinput set-prop "${id}" "libinput Natural Scrolling Enabled" 1 2>/dev/null || true
+  done < <(duckybox_pointer_devices)
+}
+
 # Width of the primary screen, or empty when it cannot be determined.
 duckybox_screen_width() {
   local width=""

@@ -176,6 +176,31 @@ EOF
   log "Wrote VPN indicator notes to ${hint}"
 }
 
+apply_input() {
+  local layout
+  layout="$(duckybox_keyboard_layout)"
+  log "Keyboard layout ${layout} and inverted scroll direction"
+
+  if command -v gsettings >/dev/null 2>&1; then
+    gsettings set org.mate.peripherals-keyboard-xkb.kbd layouts "['${layout}']" \
+      2>/dev/null || true
+    # Not every MATE release carries natural-scroll for mice, so check before
+    # setting. The installer's X11 snippet covers the releases that do not.
+    local schema
+    for schema in org.mate.peripherals-mouse org.mate.peripherals-touchpad; do
+      if gsettings writable "${schema}" natural-scroll >/dev/null 2>&1; then
+        gsettings set "${schema}" natural-scroll true 2>/dev/null || true
+        log "natural-scroll set on ${schema}"
+      fi
+    done
+  fi
+
+  duckybox_invert_scroll_live
+  if command -v setxkbmap >/dev/null 2>&1; then
+    setxkbmap "${layout}" 2>/dev/null || true
+  fi
+}
+
 bind_flameshot() {
   log "Binding a shortcut to Flameshot"
   if command -v gsettings >/dev/null 2>&1; then
@@ -200,6 +225,7 @@ main() {
   setup_plank
   duckybox_setup_vpn_overlay mate "${REPO_ROOT}" "${HOME_DIR}"
   setup_vpn_panel_hint
+  apply_input
   bind_flameshot
   log "Duckybox desktop applied"
 }

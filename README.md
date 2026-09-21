@@ -30,6 +30,14 @@ On KDE: KWin compositing off (X11 only), animation duration factor zero, blur an
 
 `mate-*` and `plasma-*` packages are never purged, since removing them breaks networking and VPN on Parrot.
 
+## Keyboard and mouse
+
+The installer sets the keyboard layout to **Spanish (Latin America)**, `latam` in XKB terms, and turns on **inverted scroll direction** for every pointing device. Change the layout with `--keyboard`, for example `sudo ./install.sh --keyboard us`.
+
+Both are applied at two levels on purpose. System-wide, through `localectl` and `/etc/default/keyboard` for the layout and an `InputClass` snippet in `/etc/X11/xorg.conf.d/99-duckybox-input.conf` for scrolling, so they hold at the login screen and in sessions the installer never sees. Then again per desktop, because MATE and Plasma keep their own copies and their settings panels would otherwise still show the old values.
+
+Plasma keys scroll direction by vendor id, product id and device name rather than offering one global switch, so the apply script enumerates the pointing devices and writes an entry per device. Only devices that actually expose the libinput property are touched. The change also lands in the running session, so no logout is needed. On Wayland the X11 snippet does not apply, but the Plasma settings still do.
+
 ## Boot splash
 
 The stage between GRUB and the login screen has three styles, picked with `--plymouth`:

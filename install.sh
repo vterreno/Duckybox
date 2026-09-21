@@ -26,6 +26,8 @@ KEEP_WAYLAND=0
 FORCE_SESSION="auto"
 PLYMOUTH_STYLE="minimal"
 FORCE_DOCKER=0
+# XKB name for Spanish (Latin America). Override with --keyboard.
+KEYBOARD_LAYOUT="latam"
 
 LOG_FILE="/var/log/duckybox-install.log"
 OPT_DIR="/opt/duckybox"
@@ -92,6 +94,7 @@ Options:
                        none               no splash at all, plain text boot
   --skip-obsidian    Do not download/install Obsidian
   --skip-sysreptor   Do not install Docker / SysReptor
+  --keyboard LAYOUT  XKB keyboard layout (default: latam, Spanish Latin America)
   --force-docker     Replace Parrot's podman-docker shim with official Docker.
                      SysReptor refuses to run against podman. Only the shim is
                      removed; the podman command keeps working.
@@ -113,6 +116,14 @@ parse_args() {
       --regen-brand) REGEN_BRAND=1 ;;
       --keep-wayland) KEEP_WAYLAND=1 ;;
       --force-docker) FORCE_DOCKER=1 ;;
+      --keyboard)
+        shift
+        KEYBOARD_LAYOUT="${1:-latam}"
+        if [[ ! "${KEYBOARD_LAYOUT}" =~ ^[a-z][a-z0-9_-]*$ ]]; then
+          echo "Invalid --keyboard layout: ${KEYBOARD_LAYOUT}" >&2
+          exit 1
+        fi
+        ;;
       --plymouth)
         shift
         PLYMOUTH_STYLE="${1:-minimal}"
@@ -1014,6 +1025,65 @@ EOF
   log_ok "GRUB theme installed"
 }
 
+# Keyboard layout and scroll direction, set at the system level so they also
+# apply at the login screen and in sessions this installer never sees. The
+# per-desktop scripts set the same things again through MATE and Plasma, which
+# keep their own copies and would otherwise show the old values in their
+# settings panels.
+configure_input() {
+  log_info "Setting the keyboard layout to ${KEYBOARD_LAYOUT} and inverting scroll"
+  if [[ "${DRY_RUN}" -eq 1 ]]; then
+    return 0
+  fi
+
+  # localectl is the systemd way and writes both the console keymap and
+  # /etc/X11/xorg.conf.d/00-keyboard.conf, keeping the two in agreement.
+  local done_via=""
+  if command -v localectl >/dev/null 2>&1 \
+    && localectl set-x11-keymap "${KEYBOARD_LAYOUT}" >/dev/null 2>&1; then
+    done_via="localectl"
+  fi
+
+  # Debian's own file. Written either way: localectl updates it on systemd
+  # systems, but console-setup reads it directly and a mismatch is confusing.
+  if [[ -f /etc/default/keyboard ]]; then
+    [[ -f /etc/default/keyboard.duckybox.bak ]] \
+      || cp -a /etc/default/keyboard /etc/default/keyboard.duckybox.bak
+    if grep -q '^XKBLAYOUT=' /etc/default/keyboard; then
+      sed -i "s|^XKBLAYOUT=.*|XKBLAYOUT=\"${KEYBOARD_LAYOUT}\"|" /etc/default/keyboard
+    else
+      printf 'XKBLAYOUT="%s"\n' "${KEYBOARD_LAYOUT}" >> /etc/default/keyboard
+    fi
+    # A stale variant would override the layout we just set.
+    if grep -q '^XKBVARIANT=' /etc/default/keyboard; then
+      sed -i 's|^XKBVARIANT=.*|XKBVARIANT=""|' /etc/default/keyboard
+    fi
+    [[ -n "${done_via}" ]] || done_via="/etc/default/keyboard"
+  fi
+
+  if command -v setupcon >/dev/null 2>&1; then
+    setupcon --save-only >/dev/null 2>&1 || true
+  fi
+  log_ok "Keyboard layout ${KEYBOARD_LAYOUT} (via ${done_via:-nothing available})"
+
+  # Recorded so the apply scripts use the same layout when run by hand later.
+  mkdir -p "${OPT_DIR}"
+  printf 'KEYBOARD_LAYOUT=%s\n' "${KEYBOARD_LAYOUT}" > "${OPT_DIR}/input.conf"
+
+  # Natural scrolling for every pointer, device-independent. libinput ignores
+  # the option on devices it does not drive, so this is safe to apply broadly.
+  mkdir -p /etc/X11/xorg.conf.d
+  cat > /etc/X11/xorg.conf.d/99-duckybox-input.conf <<EOF
+# Duckybox — invert scroll direction for all pointing devices.
+Section "InputClass"
+    Identifier "Duckybox pointers"
+    MatchIsPointer "on"
+    Option "NaturalScrolling" "true"
+EndSection
+EOF
+  log_ok "Scroll direction inverted in /etc/X11/xorg.conf.d/99-duckybox-input.conf"
+}
+
 # Which display manager actually runs the login screen. Parrot's MATE editions
 # use LightDM and the KDE edition uses SDDM, so assuming LightDM meant the
 # greeter and the default session were silently left untouched on Plasma.
@@ -1371,6 +1441,7 @@ main() {
   install_plank_theme
   configure_tmux
   configure_bashrc
+  configure_input
   setup_plymouth
   setup_grub_theme
   setup_greeter
@@ -1397,6 +1468,8 @@ Next steps:
   4. Connect OpenVPN (tun0) to see the address appear top-right and in the
      shell prompt.
   5. Apps: Flameshot, Peek, Obsidian, SysReptor (http://127.0.0.1:8000/).
+  6. Keyboard is ${KEYBOARD_LAYOUT} and scrolling is inverted, on the desktop
+     and at the login screen.
 
 Re-apply the desktop theme at any time:
   ${OPT_DIR}/apply-desktop.sh

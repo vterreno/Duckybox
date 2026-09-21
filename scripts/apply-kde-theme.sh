@@ -280,6 +280,39 @@ apply_konsole() {
   kwrite konsolerc General ConfigVersion 1
 }
 
+apply_input() {
+  local layout
+  layout="$(duckybox_keyboard_layout)"
+  log "Keyboard layout ${layout} and inverted scroll direction"
+
+  # Use=true is what makes Plasma enforce the list instead of inheriting X's.
+  kwrite kxkbrc Layout Use true
+  kwrite kxkbrc Layout LayoutList "${layout}"
+  kwrite kxkbrc Layout VariantList ""
+  kwrite kxkbrc Layout DisplayNames ""
+  kwrite kxkbrc Layout ResetOldOptions true
+
+  # Plasma keys scroll direction by vendor id, product id and device name, so
+  # there is no single global switch to flip; each device needs its own entry.
+  local id vendor product name count=0
+  while IFS='|' read -r id vendor product name; do
+    [[ -n "${id}" ]] || continue
+    kwrite_nested kcminputrc Libinput "${vendor}" "${product}" "${name}" \
+      -- NaturalScroll true
+    log "Inverted scroll for ${name}"
+    count=$((count + 1))
+  done < <(duckybox_pointer_devices)
+
+  if (( count == 0 )); then
+    log "No pointing device reported natural scrolling; the X11 snippet still applies"
+  fi
+
+  duckybox_invert_scroll_live
+  if command -v setxkbmap >/dev/null 2>&1; then
+    setxkbmap "${layout}" 2>/dev/null || true
+  fi
+}
+
 bind_flameshot() {
   log "Adding Flameshot to autostart"
   mkdir -p "${HOME_DIR}/.config/autostart"
@@ -306,6 +339,7 @@ Applied automatically:
   - Icons: Papirus-Dark with violet folders
   - Application launcher icon set to the Duckybox duck
   - Konsole profile "Duckybox"
+  - Keyboard layout and inverted scroll direction
   - Wallpaper from /usr/share/backgrounds/duckybox
   - Compositing, animations and Baloo indexing disabled
   - VPN indicator via conky, top-right
@@ -341,6 +375,7 @@ main() {
   tune_performance
   apply_wallpaper
   apply_konsole
+  apply_input
   bind_flameshot
   duckybox_setup_vpn_overlay kde "${REPO_ROOT}" "${HOME_DIR}"
   write_notes
