@@ -9,7 +9,7 @@ Brand violet `#4B0E8F` · accent `#7C3AED` · backdrop `#12071F`
 | Stage | What you get |
 |---|---|
 | GRUB | Violet menu with the duck background and a violet timeout bar |
-| Plymouth | Duck mark fading in over deep violet with a real progress bar |
+| Plymouth | A thin violet progress bar low on the screen, no animation by default |
 | LightDM | Greeter background, Duckybox GTK theme and violet icons |
 | MATE | `Duckybox` GTK theme (GTK2/3/4 plus `metacity-1` for Marco), violet Papirus icons, Plank dock, duck wallpaper picked by resolution |
 | KDE Plasma | `Duckybox` colour scheme with violet titlebars, Papirus-Dark violet icons, Konsole profile, same wallpaper |
@@ -29,6 +29,16 @@ On MATE: Marco compositing off, `reduced-resources` on, animations disabled, des
 On KDE: KWin compositing off (X11 only), animation duration factor zero, blur and slide effects disabled, and Baloo file indexing disabled, which is the biggest single win on a pentest box.
 
 `mate-*` and `plasma-*` packages are never purged, since removing them breaks networking and VPN on Parrot.
+
+## Boot splash
+
+The stage between GRUB and the login screen has three styles, picked with `--plymouth`:
+
+- **`minimal`** (default) — a thin violet progress bar low on the screen, nothing above it and no animation.
+- **`full`** — the duck mark fades in over the violet backdrop, then the bar fills.
+- **`none`** — no splash at all. Removes `quiet splash` from the kernel command line so the boot shows kernel and systemd messages. Other kernel parameters are preserved.
+
+Switching is a re-run, never a file edit: `sudo ./install.sh --plymouth full`. Both variants live in `configs/plymouth/duckybox/` and the installer copies the chosen one to `duckybox.script`.
 
 ## X11 versus Wayland
 
@@ -60,6 +70,7 @@ sudo ./install.sh
 | `--regen-brand` | Rebuild all brand assets from the logo |
 | `--session WHICH` | Desktop to theme: `auto` (default), `mate`, `kde`, `both`, `none` |
 | `--keep-wayland` | Do not make Plasma X11 the default session |
+| `--plymouth STYLE` | Boot splash: `minimal` (default), `full`, `none` |
 | `--skip-obsidian` | Do not download Obsidian |
 | `--skip-sysreptor` | Do not install Docker or SysReptor |
 | `--skip-plymouth` | Leave the boot splash alone |

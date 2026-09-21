@@ -22,6 +22,7 @@ SKIP_GTK=0
 REGEN_BRAND=0
 KEEP_WAYLAND=0
 FORCE_SESSION="auto"
+PLYMOUTH_STYLE="minimal"
 
 LOG_FILE="/var/log/duckybox-install.log"
 OPT_DIR="/opt/duckybox"
@@ -82,6 +83,10 @@ Options:
   --regen-brand      Rebuild brand assets from assets/brand/duckybox-logo.png
   --session WHICH    Desktop to theme: auto (default), mate, kde, both, none
   --keep-wayland     Do not make Plasma X11 the default LightDM session
+  --plymouth STYLE   Boot splash between GRUB and the login screen:
+                       minimal (default)  progress bar only, no animation
+                       full               duck mark fading in, then the bar
+                       none               no splash at all, plain text boot
   --skip-obsidian    Do not download/install Obsidian
   --skip-sysreptor   Do not install Docker / SysReptor
   --skip-plymouth    Skip the Plymouth boot splash
@@ -101,6 +106,14 @@ parse_args() {
       --verbose) VERBOSE=1 ;;
       --regen-brand) REGEN_BRAND=1 ;;
       --keep-wayland) KEEP_WAYLAND=1 ;;
+      --plymouth)
+        shift
+        PLYMOUTH_STYLE="${1:-minimal}"
+        case "${PLYMOUTH_STYLE}" in
+          minimal|full|none) ;;
+          *) echo "Invalid --plymouth: ${PLYMOUTH_STYLE}" >&2; exit 1 ;;
+        esac
+        ;;
       --session)
         shift
         FORCE_SESSION="${1:-auto}"
@@ -661,14 +674,36 @@ setup_plymouth() {
     log_info "Skipping Plymouth (--skip-plymouth)"
     return 0
   fi
-  log_info "Installing the Duckybox Plymouth theme"
+
+  if [[ "${PLYMOUTH_STYLE}" == "none" ]]; then
+    log_info "Disabling the boot splash (--plymouth none)"
+    if [[ "${DRY_RUN}" -eq 1 ]]; then
+      return 0
+    fi
+    set_grub_splash off
+    if command -v update-initramfs >/dev/null 2>&1; then
+      update-initramfs -u || log_warn "update-initramfs failed"
+    fi
+    log_ok "Boot splash disabled; the boot now shows kernel and systemd messages"
+    return 0
+  fi
+
+  log_info "Installing the Duckybox Plymouth theme (style: ${PLYMOUTH_STYLE})"
   if [[ "${DRY_RUN}" -eq 1 ]]; then
     return 0
   fi
 
   mkdir -p "${THEME_PLYMOUTH}"
   cp -f "${REPO_ROOT}/configs/plymouth/duckybox/duckybox.plymouth" "${THEME_PLYMOUTH}/"
-  cp -f "${REPO_ROOT}/configs/plymouth/duckybox/duckybox.script" "${THEME_PLYMOUTH}/"
+
+  # The theme always loads duckybox.script; the style decides which variant
+  # that is, so switching styles is a re-run and never an edit.
+  local variant="${REPO_ROOT}/configs/plymouth/duckybox/duckybox-${PLYMOUTH_STYLE}.script"
+  if [[ ! -f "${variant}" ]]; then
+    log_error "Missing Plymouth variant: ${variant}"
+    return 1
+  fi
+  cp -f "${variant}" "${THEME_PLYMOUTH}/duckybox.script"
 
   local asset
   for asset in logo.png progress_bg.png progress_fg.png bullet.png; do
@@ -685,20 +720,62 @@ setup_plymouth() {
     log_warn "plymouth-set-default-theme not found; theme copied but not activated"
   fi
 
-  ensure_grub_cmdline_splash
+  set_grub_splash on
 
   if command -v update-initramfs >/dev/null 2>&1; then
     update-initramfs -u || log_warn "update-initramfs failed"
   fi
-  log_ok "Plymouth theme installed"
+  log_ok "Plymouth theme installed (${PLYMOUTH_STYLE})"
 }
 
-ensure_grub_cmdline_splash() {
+# set_grub_splash <on|off> — the splash keyword is what tells the kernel to
+# hand the screen to Plymouth, so removing it is how you get a text boot.
+set_grub_splash() {
+  local mode="$1"
   [[ -f /etc/default/grub ]] || return 0
-  if ! grep -q 'splash' /etc/default/grub; then
-    sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 splash"/' \
-      /etc/default/grub || true
-    log_info "Added splash to GRUB_CMDLINE_LINUX_DEFAULT"
+  cp -a /etc/default/grub /etc/default/grub.duckybox.bak 2>/dev/null || true
+
+  local current
+  current="$(grep -E '^GRUB_CMDLINE_LINUX_DEFAULT=' /etc/default/grub \
+    | head -n1 | sed -E 's/^[^=]+=//; s/^"//; s/"$//')"
+
+  # Drop splash and quiet, then add back what this mode wants. Done in pure
+  # bash on purpose: a grep pipeline here exits 1 when it filters everything
+  # out, which under `set -o pipefail` would abort the install on the very
+  # common value "quiet splash".
+  local cleaned="" token
+  for token in ${current}; do
+    case "${token}" in
+      splash|quiet) continue ;;
+    esac
+    cleaned="${cleaned:+${cleaned} }${token}"
+  done
+
+  local wanted
+  if [[ "${mode}" == "on" ]]; then
+    wanted="$(printf '%s quiet splash' "${cleaned}" | sed -E 's/^ +//')"
+  else
+    wanted="${cleaned}"
+  fi
+
+  if [[ "${current}" == "${wanted}" ]]; then
+    log_debug "GRUB_CMDLINE_LINUX_DEFAULT already correct"
+    return 0
+  fi
+
+  if grep -qE '^GRUB_CMDLINE_LINUX_DEFAULT=' /etc/default/grub; then
+    sed -i "s|^GRUB_CMDLINE_LINUX_DEFAULT=.*|GRUB_CMDLINE_LINUX_DEFAULT=\"${wanted}\"|" \
+      /etc/default/grub
+  else
+    printf '\nGRUB_CMDLINE_LINUX_DEFAULT="%s"\n' "${wanted}" >> /etc/default/grub
+  fi
+  log_info "GRUB_CMDLINE_LINUX_DEFAULT=\"${wanted}\""
+
+  # The kernel command line lives in grub.cfg, so it has to be regenerated.
+  if command -v update-grub >/dev/null 2>&1; then
+    update-grub >/dev/null 2>&1 || log_warn "update-grub failed"
+  elif command -v grub-mkconfig >/dev/null 2>&1; then
+    grub-mkconfig -o /boot/grub/grub.cfg >/dev/null 2>&1 || log_warn "grub-mkconfig failed"
   fi
 }
 
@@ -741,7 +818,8 @@ setup_grub_theme() {
     else
       printf '\nGRUB_THEME="%s/theme.txt"\n' "${THEME_GRUB}" >> /etc/default/grub
     fi
-    ensure_grub_cmdline_splash
+    # setup_plymouth already decided whether splash belongs on the cmdline;
+    # do not re-add it here or --plymouth none would be undone.
   fi
 
   # grub-mkconfig sources /etc/default/grub.d/*.cfg after /etc/default/grub,

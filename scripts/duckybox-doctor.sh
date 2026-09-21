@@ -111,10 +111,23 @@ check "Plymouth logo" test -f /usr/share/plymouth/themes/duckybox/logo.png
 if command -v plymouth-set-default-theme >/dev/null 2>&1; then
   printf '  active plymouth theme: %s\n' "$(plymouth-set-default-theme 2>/dev/null)"
 fi
+# The style is whichever variant install.sh copied into place.
+ply_script=/usr/share/plymouth/themes/duckybox/duckybox.script
+if [[ -f "${ply_script}" ]]; then
+  if grep -q 'logo.png' "${ply_script}"; then
+    printf '  splash style: full (animated duck)\n'
+  else
+    printf '  splash style: minimal (progress bar only)\n'
+  fi
+fi
+printf '  kernel cmdline: %s\n' \
+  "$(grep -E '^GRUB_CMDLINE_LINUX_DEFAULT=' /etc/default/grub 2>/dev/null | cut -d= -f2-)"
+if ! grep -qE '^GRUB_CMDLINE_LINUX_DEFAULT=.*splash' /etc/default/grub 2>/dev/null; then
+  printf '  NOTE: no splash on the cmdline, so the boot shows text messages\n'
+fi
 check "GRUB theme" test -f /boot/grub/themes/duckybox/theme.txt
 check "GRUB_THEME configured" grep -q '^GRUB_THEME=' /etc/default/grub
 check "grub.d override present" test -f /etc/default/grub.d/99-duckybox.cfg
-check "splash in cmdline" grep -q splash /etc/default/grub
 # A distro GRUB_BACKGROUND or a later grub.d snippet would hide our theme.
 printf '  competing GRUB settings:\n'
 grep -rHnE '^[[:space:]]*(GRUB_THEME|GRUB_BACKGROUND)=' \
