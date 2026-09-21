@@ -105,6 +105,24 @@ else
   printf '  [FAIL] overlay not running\n'
 fi
 
+section "Docker / SysReptor"
+if command -v docker >/dev/null 2>&1; then
+  docker_ver="$(docker --version 2>&1 | head -n1)"
+  printf '  docker: %s\n' "${docker_ver}"
+  # The podman shim is why SysReptor refuses to install.
+  if printf '%s' "${docker_ver}" | grep -qi podman; then
+    printf '  NOTE: this is the podman shim; re-run install.sh --force-docker\n'
+  fi
+  if docker compose version >/dev/null 2>&1; then
+    printf '  compose: %s\n' "$(docker compose version 2>&1 | head -n1)"
+  else
+    printf '  compose: v2 not available\n'
+  fi
+else
+  printf '  docker: not installed\n'
+fi
+check "sysreptor deploy dir" test -d /opt/sysreptor/deploy
+
 section "Login screen"
 dm=""
 if [[ -L /etc/systemd/system/display-manager.service ]]; then

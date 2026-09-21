@@ -58,12 +58,18 @@ The installer now leaves a one-shot autostart entry that re-applies the theme ab
 
 **Flameshot**, **Peek**, **Obsidian** (amd64 `.deb` from GitHub Releases) and **SysReptor** (Docker, at `/opt/sysreptor`, UI on `http://127.0.0.1:8000/`).
 
+### SysReptor needs real Docker, not podman
+
+Parrot ships `podman-docker`, which installs a podman shim at `/usr/bin/docker`. That makes `command -v docker` succeed while `docker` is not Docker, and SysReptor's own installer rejects it on the spot: its check is literally `docker --version | grep -q podman`.
+
+By default the installer detects this and skips SysReptor with an explanation rather than removing packages you did not ask it to remove. Pass `--force-docker` to swap the shim for official Docker. Only the `podman-docker` package is removed, so the `podman` command keeps working; podman itself is never touched.
+
 ## Requirements
 
 - Parrot OS Security or Home with **MATE** or **KDE Plasma**, behind **LightDM** or **SDDM**
 - root via `sudo`
 - Network for `apt`, the GTK theme build, Obsidian and Docker images
-- **amd64** for Obsidian and SysReptor. On arm64 both are skipped with a `WARN`: the Obsidian `.deb` is amd64-only and the SysReptor images are not built for arm64. Everything else, including the GTK theme build, works on arm64.
+- **amd64** for Obsidian only. Its `.deb` on GitHub Releases is amd64-only, so on arm64 it is skipped with a `WARN`. SysReptor publishes both `amd64` and `arm64` images and works on either, and so does everything else including the GTK theme build.
 
 ## Install
 
@@ -81,6 +87,7 @@ sudo ./install.sh
 | `--session WHICH` | Desktop to theme: `auto` (default), `mate`, `kde`, `both`, `none` |
 | `--keep-wayland` | Do not make Plasma X11 the default session |
 | `--plymouth STYLE` | Boot splash: `minimal` (default), `full`, `none` |
+| `--force-docker` | Replace Parrot's `podman-docker` shim with official Docker |
 | `--skip-obsidian` | Do not download Obsidian |
 | `--skip-sysreptor` | Do not install Docker or SysReptor |
 | `--skip-plymouth` | Leave the boot splash alone |

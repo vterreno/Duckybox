@@ -25,6 +25,7 @@ REGEN_BRAND=0
 KEEP_WAYLAND=0
 FORCE_SESSION="auto"
 PLYMOUTH_STYLE="minimal"
+FORCE_DOCKER=0
 
 LOG_FILE="/var/log/duckybox-install.log"
 OPT_DIR="/opt/duckybox"
@@ -91,6 +92,9 @@ Options:
                        none               no splash at all, plain text boot
   --skip-obsidian    Do not download/install Obsidian
   --skip-sysreptor   Do not install Docker / SysReptor
+  --force-docker     Replace Parrot's podman-docker shim with official Docker.
+                     SysReptor refuses to run against podman. Only the shim is
+                     removed; the podman command keeps working.
   --skip-plymouth    Skip the Plymouth boot splash
   --skip-grub        Skip the GRUB theme
   --skip-gtk         Skip building the Duckybox GTK theme and icons
@@ -108,6 +112,7 @@ parse_args() {
       --verbose) VERBOSE=1 ;;
       --regen-brand) REGEN_BRAND=1 ;;
       --keep-wayland) KEEP_WAYLAND=1 ;;
+      --force-docker) FORCE_DOCKER=1 ;;
       --plymouth)
         shift
         PLYMOUTH_STYLE="${1:-minimal}"
@@ -335,8 +340,56 @@ install_obsidian() {
   rm -rf "${tmp}"
 }
 
+# Parrot ships podman-docker, which puts a podman shim at /usr/bin/docker. So
+# `command -v docker` succeeds while `docker` is not Docker at all, and
+# SysReptor's installer rejects it outright with `docker --version | grep -q
+# podman`. Only the shim package is the problem; podman itself is untouched.
+docker_is_podman() {
+  command -v docker >/dev/null 2>&1 || return 1
+  local target
+  target="$(readlink -f "$(command -v docker)" 2>/dev/null || true)"
+  [[ "${target}" == */podman ]] && return 0
+  docker --version 2>&1 | grep -qi podman && return 0
+  return 1
+}
+
+replace_podman_docker() {
+  log_info "Removing the podman-docker shim and installing official Docker"
+  export DEBIAN_FRONTEND=noninteractive
+
+  # Only the CLI shim goes; the podman command keeps working.
+  apt-get remove -y podman-docker >/dev/null 2>&1 \
+    || log_warn "Could not remove podman-docker"
+
+  if ! apt-get install -y docker.io >/dev/null 2>&1; then
+    log_warn "apt docker.io failed; trying get.docker.com"
+    if ! curl -fsSL https://get.docker.com | bash; then
+      log_warn "Docker install failed"
+      return 1
+    fi
+  fi
+
+  if docker_is_podman; then
+    log_warn "docker still resolves to podman; SysReptor cannot run"
+    return 1
+  fi
+  log_ok "Official Docker installed; podman itself is still available"
+}
+
 ensure_docker() {
-  if command -v docker >/dev/null 2>&1; then
+  if docker_is_podman; then
+    if [[ "${FORCE_DOCKER}" -eq 1 ]]; then
+      if [[ "${DRY_RUN}" -eq 1 ]]; then
+        return 0
+      fi
+      replace_podman_docker || return 1
+    else
+      log_warn "docker on this system is the podman shim, which SysReptor rejects"
+      log_warn "Re-run with --force-docker to swap it for official Docker, or"
+      log_warn "use --skip-sysreptor to stop trying. podman stays either way."
+      return 1
+    fi
+  elif command -v docker >/dev/null 2>&1; then
     log_ok "Docker already present"
   else
     log_info "Installing Docker"
@@ -370,6 +423,13 @@ ensure_docker() {
   groupadd -f docker 2>/dev/null || true
   usermod -aG docker "${TARGET_USER}" 2>/dev/null || true
   log_ok "User ${TARGET_USER} added to the docker group (re-login may be required)"
+
+  # SysReptor needs compose v2 specifically. Check now so it is skipped with a
+  # clear reason instead of failing partway through its own installer.
+  if ! docker compose version >/dev/null 2>&1; then
+    log_warn "docker compose v2 is not available; SysReptor cannot be installed"
+    return 1
+  fi
 }
 
 install_sysreptor() {
@@ -390,7 +450,7 @@ install_sysreptor() {
   fi
 
   if ! ensure_docker; then
-    log_warn "SysReptor skipped: Docker not available"
+    log_warn "SysReptor skipped: no usable Docker (see the warnings above)"
     return 0
   fi
 
