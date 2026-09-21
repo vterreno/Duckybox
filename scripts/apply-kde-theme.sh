@@ -106,10 +106,44 @@ find_launcher_applets() {
       }
       next
     }
-    /^plugin=org\.kde\.plasma\.(kickoff|kicker|kickerdash)$/ {
+    # Distros rename the launcher widget, so match the family rather than one
+    # exact plugin. kickoff is the standard menu, kicker the compact one,
+    # kickerdash the full-screen dashboard.
+    /^plugin=.*(kickoff|kicker|kickerdash|simplemenu|menu11|launcher)/ {
       if (cur_c != "") print cur_c, cur_a
     }
   ' "$1"
+}
+
+# Every applet in the panel, for the log. If a distro ships a launcher this
+# script does not recognise, this is what reveals its plugin name.
+list_panel_plugins() {
+  sed -n 's/^plugin=//p' "$1" | sort -u | tr '\n' ' '
+}
+
+stop_plasmashell() {
+  # Returns 0 if it stopped something, 1 if there was nothing to stop.
+  pgrep -x plasmashell >/dev/null 2>&1 || return 1
+
+  local quit
+  quit="$(pick_tool kquitapp6 kquitapp5 kquitapp || true)"
+  if [[ -n "${quit}" ]]; then
+    # Graceful, so it flushes its config before we edit the file.
+    "${quit}" plasmashell >/dev/null 2>&1 || true
+  else
+    pkill -x plasmashell 2>/dev/null || true
+  fi
+
+  local waited=0
+  while pgrep -x plasmashell >/dev/null 2>&1 && (( waited < 24 )); do
+    sleep 0.5
+    waited=$((waited + 1))
+  done
+  if pgrep -x plasmashell >/dev/null 2>&1; then
+    log "plasmashell did not exit; the menu icon may not stick"
+    return 1
+  fi
+  return 0
 }
 
 apply_launcher_icon() {
@@ -119,32 +153,45 @@ apply_launcher_icon() {
     return 0
   fi
 
-  # Parrot's launcher points at a Parrot-branded icon name that Papirus-Dark
-  # does not carry, so switching icon themes leaves it as a generic file. Name
-  # our own icon explicitly instead of relying on the theme having it.
-  local containment applet count=0
+  local -a targets=()
+  local containment applet
   while read -r containment applet; do
     [[ -n "${containment}" ]] || continue
-    if (( count == 0 )); then
-      duckybox_backup "${cfg}"
-    fi
+    targets+=("${containment} ${applet}")
+  done < <(find_launcher_applets "${cfg}")
+
+  if [[ "${#targets[@]}" -eq 0 ]]; then
+    log "No application launcher recognised in the panel; menu icon left alone"
+    log "Panel plugins present: $(list_panel_plugins "${cfg}")"
+    return 0
+  fi
+
+  # Order matters here. plasmashell keeps this file in memory and flushes it on
+  # exit, so editing while it runs is a race we lose: --replace starts a new
+  # instance that reads our value, then the outgoing one writes its stale copy
+  # over it. Quit first, edit, then start again, so our write is the last one.
+  local restarted=0
+  if stop_plasmashell; then
+    restarted=1
+    log "Stopped plasmashell so the panel config can be edited safely"
+  fi
+
+  duckybox_backup "${cfg}"
+  local pair
+  for pair in "${targets[@]}"; do
+    containment="${pair%% *}"
+    applet="${pair##* }"
+    # Parrot's launcher names a Parrot-branded icon, so point it at ours
+    # explicitly rather than hoping the active icon theme carries that name.
     kwrite_nested "${cfg}" \
       Containments "${containment}" Applets "${applet}" Configuration General \
       -- icon duckybox
     log "Menu icon set on containment ${containment}, applet ${applet}"
-    count=$((count + 1))
-  done < <(find_launcher_applets "${cfg}")
+  done
 
-  if (( count == 0 )); then
-    log "No application launcher found in the panel; menu icon left alone"
-    return 0
-  fi
-
-  # plasmashell holds this config in memory and rewrites it when it exits, so
-  # an edit made mid-session is lost unless it re-reads from disk.
-  if pgrep -x plasmashell >/dev/null 2>&1; then
-    log "Restarting plasmashell so it picks up the new icon"
-    (setsid plasmashell --replace >/dev/null 2>&1 &) || true
+  if (( restarted == 1 )); then
+    log "Starting plasmashell again"
+    (setsid plasmashell >/dev/null 2>&1 &) || true
   fi
 }
 
@@ -291,7 +338,6 @@ main() {
   install_color_scheme
   apply_icons_and_style
   apply_window_decorations
-  apply_launcher_icon
   tune_performance
   apply_wallpaper
   apply_konsole
@@ -299,6 +345,9 @@ main() {
   duckybox_setup_vpn_overlay kde "${REPO_ROOT}" "${HOME_DIR}"
   write_notes
   reload_session
+  # Last, deliberately: it stops and starts plasmashell, and everything above
+  # either needs plasmashell running or is flushed to disk when it exits.
+  apply_launcher_icon
   log "Duckybox KDE theme applied (log out and back in to settle)"
 }
 

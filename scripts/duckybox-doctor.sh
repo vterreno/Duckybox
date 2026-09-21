@@ -135,7 +135,13 @@ if [[ -f "${appletsrc}" ]]; then
   if grep -q '^icon=duckybox$' "${appletsrc}"; then
     printf '  plasma menu icon: duckybox\n'
   else
-    printf '  plasma menu icon: not set to duckybox (log out and back in?)\n'
+    printf '  plasma menu icon: not set to duckybox\n'
+    # Whatever icon the launcher is pointing at instead, so a distro-specific
+    # name shows up rather than staying a mystery.
+    printf '  icon= values in the panel: %s\n' \
+      "$(sed -n 's/^icon=//p' "${appletsrc}" | sort -u | tr '\n' ' ')"
+    printf '  panel plugins: %s\n' \
+      "$(sed -n 's/^plugin=//p' "${appletsrc}" | sort -u | tr '\n' ' ')"
   fi
 fi
 
