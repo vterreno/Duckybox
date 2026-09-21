@@ -1,0 +1,21 @@
+# Turfbox OSC color sequences (apply in any terminal / bashrc)
+# Background #0D1117, foreground #E8E8E8, accent orange in palette
+
+printf '\e]10;#E8E8E8\e\\'
+printf '\e]11;#0D1117\e\\'
+printf '\e]4;1;#FF4D4D\e\\'
+printf '\e]4;2;#7CB342\e\\'
+printf '\e]4;3;#FF8C1A\e\\'
+printf '\e]4;4;#42A5F5\e\\'
+printf '\e]4;5;#AB47BC\e\\'
+printf '\e]4;6;#26C6DA\e\\'
+printf '\e]4;7;#E8E8E8\e\\'
+printf '\e]4;8;#546E7A\e\\'
+printf '\e]4;9;#FF6A00\e\\'
+printf '\e]4;10;#9CCC65\e\\'
+printf '\e]4;11;#FFB74D\e\\'
+printf '\e]4;12;#64B5F6\e\\'
+printf '\e]4;13;#CE93D8\e\\'
+printf '\e]4;14;#4DD0E1\e\\'
+printf '\e]4;15;#FFFFFF\e\\'
+printf '\e]4;0;#0D1117\e\\'

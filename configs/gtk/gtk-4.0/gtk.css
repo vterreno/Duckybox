@@ -1,0 +1,20 @@
+/* Turfbox GTK4 overrides — orange accent on dark */
+
+@define-color turfbox_bg #0D1117;
+@define-color turfbox_fg #E8E8E8;
+@define-color turfbox_accent #FF6A00;
+
+window {
+  background-color: @turfbox_bg;
+  color: @turfbox_fg;
+}
+
+headerbar {
+  background-color: #131820;
+  color: @turfbox_fg;
+}
+
+button.suggested-action {
+  background-color: @turfbox_accent;
+  color: @turfbox_bg;
+}

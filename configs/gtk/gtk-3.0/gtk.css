@@ -1,0 +1,48 @@
+/* Turfbox GTK3 overrides — orange accent on dark */
+
+@define-color turfbox_bg #0D1117;
+@define-color turfbox_fg #E8E8E8;
+@define-color turfbox_accent #FF6A00;
+@define-color turfbox_accent_hover #FF8C1A;
+
+window,
+.background {
+  background-color: @turfbox_bg;
+  color: @turfbox_fg;
+}
+
+headerbar,
+.titlebar {
+  background-image: none;
+  background-color: #131820;
+  color: @turfbox_fg;
+  border-bottom: 1px solid @turfbox_accent;
+}
+
+button:checked,
+button.suggested-action,
+.button.suggested-action {
+  background-image: none;
+  background-color: @turfbox_accent;
+  color: @turfbox_bg;
+}
+
+button:checked:hover,
+button.suggested-action:hover {
+  background-color: @turfbox_accent_hover;
+}
+
+selection,
+*:selected {
+  background-color: @turfbox_accent;
+  color: @turfbox_bg;
+}
+
+progressbar trough progress,
+progressbar.horizontal trough progress {
+  background-color: @turfbox_accent;
+}
+
+notebook > header > tabs > tab:checked {
+  border-bottom: 2px solid @turfbox_accent;
+}

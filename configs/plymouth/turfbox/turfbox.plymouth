@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=Turfbox
+Description=Turfbox orange boot splash with horse ASCII
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/turfbox
+ScriptFile=/usr/share/plymouth/themes/turfbox/turfbox.script
