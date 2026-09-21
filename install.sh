@@ -20,6 +20,8 @@ SKIP_PLYMOUTH=0
 SKIP_GRUB=0
 SKIP_GTK=0
 REGEN_BRAND=0
+KEEP_WAYLAND=0
+FORCE_SESSION="auto"
 
 LOG_FILE="/var/log/duckybox-install.log"
 OPT_DIR="/opt/duckybox"
@@ -78,12 +80,17 @@ Options:
   --dry-run          Print actions without changing the system
   --verbose          Extra debug logging
   --regen-brand      Rebuild brand assets from assets/brand/duckybox-logo.png
+  --session WHICH    Desktop to theme: auto (default), mate, kde, both, none
+  --keep-wayland     Do not make Plasma X11 the default LightDM session
   --skip-obsidian    Do not download/install Obsidian
   --skip-sysreptor   Do not install Docker / SysReptor
   --skip-plymouth    Skip the Plymouth boot splash
   --skip-grub        Skip the GRUB theme
   --skip-gtk         Skip building the Duckybox GTK theme and icons
   -h, --help         Show this help
+
+Duckybox themes MATE and KDE Plasma. With --session auto it detects which of
+them are installed and themes each one, so a machine with both is covered.
 EOF
 }
 
@@ -93,6 +100,15 @@ parse_args() {
       --dry-run) DRY_RUN=1 ;;
       --verbose) VERBOSE=1 ;;
       --regen-brand) REGEN_BRAND=1 ;;
+      --keep-wayland) KEEP_WAYLAND=1 ;;
+      --session)
+        shift
+        FORCE_SESSION="${1:-auto}"
+        case "${FORCE_SESSION}" in
+          auto|mate|kde|both|none) ;;
+          *) echo "Invalid --session: ${FORCE_SESSION}" >&2; exit 1 ;;
+        esac
+        ;;
       --skip-obsidian) SKIP_OBSIDIAN=1 ;;
       --skip-sysreptor) SKIP_SYSREPTOR=1 ;;
       --skip-plymouth) SKIP_PLYMOUTH=1 ;;
@@ -150,6 +166,47 @@ require_parrot() {
   else
     log_ok "Detected Parrot OS (${PRETTY_NAME:-Parrot})"
   fi
+  log_info "Architecture: $(dpkg --print-architecture 2>/dev/null || uname -m)"
+}
+
+# Which desktops this machine can actually run. Populates DESKTOPS.
+detect_desktops() {
+  DESKTOPS=()
+
+  case "${FORCE_SESSION}" in
+    mate) DESKTOPS=(mate) ;;
+    kde) DESKTOPS=(kde) ;;
+    both) DESKTOPS=(mate kde) ;;
+    none) log_info "Desktop theming disabled (--session none)"; return 0 ;;
+    auto)
+      if command -v marco >/dev/null 2>&1 || command -v mate-session >/dev/null 2>&1; then
+        DESKTOPS+=(mate)
+      fi
+      if command -v plasmashell >/dev/null 2>&1; then
+        DESKTOPS+=(kde)
+      fi
+      ;;
+  esac
+
+  if [[ "${#DESKTOPS[@]}" -eq 0 ]]; then
+    log_warn "Neither MATE nor KDE Plasma found; only system-level theming will apply"
+  else
+    log_ok "Desktops to theme: ${DESKTOPS[*]}"
+  fi
+
+  # The session the user is logged into right now, for the report at the end.
+  CURRENT_SESSION_TYPE="$(loginctl show-session \
+    "$(loginctl list-sessions --no-legend 2>/dev/null | awk -v u="${TARGET_USER}" '$3==u {print $1; exit}')" \
+    -p Type --value 2>/dev/null || true)"
+  [[ -n "${CURRENT_SESSION_TYPE}" ]] && log_info "Current session type: ${CURRENT_SESSION_TYPE}"
+}
+
+in_desktops() {
+  local want="$1" d
+  for d in "${DESKTOPS[@]:-}"; do
+    [[ "${d}" == "${want}" ]] && return 0
+  done
+  return 1
 }
 
 # ---------------------------------------------------------------------------
@@ -171,23 +228,41 @@ install_base_packages() {
   apt_install \
     plymouth \
     plymouth-themes \
-    plank \
     tmux \
+    conky-all \
     fonts-dejavu-core \
     flameshot \
-    peek \
     imagemagick \
     curl \
     wget \
     ca-certificates \
-    dconf-cli \
-    gsettings-desktop-schemas \
     x11-xserver-utils \
     openssl \
     uuid-runtime \
     coreutils \
     sed
-  log_ok "Base packages installed (including Flameshot and Peek)"
+  log_ok "Base packages installed"
+}
+
+# Plank and the MATE settings tools are only useful on MATE, and Peek only
+# works on X11, so install them where they actually apply.
+install_desktop_packages() {
+  local pkgs=()
+  if in_desktops mate; then
+    pkgs+=(plank dconf-cli gsettings-desktop-schemas)
+  fi
+  if in_desktops kde; then
+    pkgs+=(konsole)
+  fi
+  if [[ "${KEEP_WAYLAND}" -eq 0 ]]; then
+    pkgs+=(peek)
+  else
+    log_warn "Peek does not work on Wayland; skipping it"
+  fi
+
+  if [[ "${#pkgs[@]}" -gt 0 ]]; then
+    apt_install "${pkgs[@]}" || log_warn "some desktop packages failed to install"
+  fi
 }
 
 install_obsidian() {
@@ -428,10 +503,10 @@ deploy_opt() {
     return 0
   fi
   mkdir -p "${OPT_DIR}"
+  # Only self-contained scripts get a flat copy; the rest run from repo/ below
+  # because they source scripts/lib/.
   install -m 755 "${REPO_ROOT}/scripts/vpnpanel.sh" "${OPT_DIR}/vpnpanel.sh"
   install -m 755 "${REPO_ROOT}/scripts/vpnbash.sh" "${OPT_DIR}/vpnbash.sh"
-  install -m 755 "${REPO_ROOT}/scripts/apply-mate-theme.sh" "${OPT_DIR}/apply-mate-theme.sh"
-  install -m 755 "${REPO_ROOT}/scripts/generate-brand.sh" "${OPT_DIR}/generate-brand.sh"
   install -m 755 "${REPO_ROOT}/scripts/duckybox-doctor.sh" "${OPT_DIR}/duckybox-doctor.sh"
   cp -f "${REPO_ROOT}/assets/duck.txt" "${OPT_DIR}/duck.txt"
   cp -f "${REPO_ROOT}/assets/duckybox-banner.txt" "${OPT_DIR}/duckybox-banner.txt"
@@ -444,6 +519,38 @@ deploy_opt() {
   cp -a "${REPO_ROOT}/configs" "${OPT_DIR}/repo/"
   cp -a "${REPO_ROOT}/assets" "${OPT_DIR}/repo/"
   cp -a "${REPO_ROOT}/scripts" "${OPT_DIR}/repo/"
+
+  # Re-runnable entry point, handy after changing the wallpaper or a config.
+  cat > "${OPT_DIR}/apply-desktop.sh" <<'EOF'
+#!/usr/bin/env bash
+# Duckybox — re-apply the desktop theme for the session you are in.
+set -euo pipefail
+SCRIPTS=/opt/duckybox/repo/scripts
+case "${1:-auto}" in
+  mate) targets=(mate) ;;
+  kde)  targets=(kde) ;;
+  auto)
+    targets=()
+    case "${XDG_CURRENT_DESKTOP:-}" in
+      *KDE*|*plasma*|*Plasma*) targets=(kde) ;;
+      *MATE*|*mate*) targets=(mate) ;;
+      *)
+        command -v plasmashell >/dev/null 2>&1 && targets+=(kde)
+        command -v marco >/dev/null 2>&1 && targets+=(mate)
+        ;;
+    esac
+    ;;
+  *) echo "Usage: $0 [auto|mate|kde]" >&2; exit 1 ;;
+esac
+if [[ "${#targets[@]}" -eq 0 ]]; then
+  echo "No supported desktop detected." >&2
+  exit 1
+fi
+for t in "${targets[@]}"; do
+  bash "${SCRIPTS}/apply-${t}-theme.sh"
+done
+EOF
+  chmod 755 "${OPT_DIR}/apply-desktop.sh"
   log_ok "Deployed ${OPT_DIR}"
 }
 
@@ -483,6 +590,10 @@ install_gtk_theme() {
 }
 
 install_plank_theme() {
+  if ! in_desktops mate; then
+    log_debug "Plank is a MATE-only piece here; skipping its theme"
+    return 0
+  fi
   log_info "Installing the Plank dock theme"
   if [[ "${DRY_RUN}" -eq 1 ]]; then
     return 0
@@ -620,18 +731,30 @@ setup_grub_theme() {
 
   if [[ -f /etc/default/grub ]]; then
     cp -a /etc/default/grub /etc/default/grub.duckybox.bak 2>/dev/null || true
+    # Parrot ships its own GRUB_BACKGROUND; it would draw over our theme.
+    if grep -q '^GRUB_BACKGROUND=' /etc/default/grub; then
+      sed -i 's|^GRUB_BACKGROUND=|#GRUB_BACKGROUND=|' /etc/default/grub
+      log_info "Disabled the stock GRUB_BACKGROUND in /etc/default/grub"
+    fi
     if grep -q '^GRUB_THEME=' /etc/default/grub; then
       sed -i "s|^GRUB_THEME=.*|GRUB_THEME=\"${THEME_GRUB}/theme.txt\"|" /etc/default/grub
     else
       printf '\nGRUB_THEME="%s/theme.txt"\n' "${THEME_GRUB}" >> /etc/default/grub
     fi
-    if grep -q '^#\?GRUB_GFXMODE=' /etc/default/grub; then
-      sed -i 's|^#\?GRUB_GFXMODE=.*|GRUB_GFXMODE=1920x1080,auto|' /etc/default/grub
-    else
-      printf 'GRUB_GFXMODE=1920x1080,auto\n' >> /etc/default/grub
-    fi
     ensure_grub_cmdline_splash
   fi
+
+  # grub-mkconfig sources /etc/default/grub.d/*.cfg after /etc/default/grub,
+  # so a distro snippet there can silently override the settings above. Land
+  # ours last, alphabetically, and clear any inherited background.
+  mkdir -p /etc/default/grub.d
+  cat > /etc/default/grub.d/99-duckybox.cfg <<EOF
+# Duckybox — sourced after every other grub.d snippet, so this wins.
+GRUB_THEME="${THEME_GRUB}/theme.txt"
+GRUB_BACKGROUND=
+GRUB_GFXMODE=auto
+EOF
+  log_info "Wrote /etc/default/grub.d/99-duckybox.cfg"
 
   if command -v update-grub >/dev/null 2>&1; then
     update-grub || log_warn "update-grub failed"
@@ -676,20 +799,89 @@ setup_greeter() {
   fi
 }
 
-apply_mate_as_user() {
-  log_info "Applying the MATE desktop theme as ${TARGET_USER}"
+# Peek needs X11, conky needs X11, and KWin only honours the compositing and
+# effects settings on X11. Make the Plasma X11 session the LightDM default.
+setup_x11_session() {
+  if [[ "${KEEP_WAYLAND}" -eq 1 ]]; then
+    log_info "Leaving the default session alone (--keep-wayland)"
+    return 0
+  fi
+  if ! in_desktops kde; then
+    log_debug "No Plasma installed; nothing to switch"
+    return 0
+  fi
+  if [[ ! -d /etc/lightdm ]]; then
+    log_warn "LightDM not found; set the X11 session manually at the login screen"
+    return 0
+  fi
   if [[ "${DRY_RUN}" -eq 1 ]]; then
     return 0
   fi
-  local apply="${OPT_DIR}/apply-mate-theme.sh"
-  [[ -x "${apply}" ]] || apply="${REPO_ROOT}/scripts/apply-mate-theme.sh"
 
-  sudo -u "${TARGET_USER}" -H \
-    DUCKYBOX_OPT="${OPT_DIR}" \
-    DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-}" \
-    bash "${apply}" \
-    || log_warn "Desktop theming returned non-zero (a graphical session may be required)"
-  log_ok "MATE desktop step finished"
+  local session=""
+  find_x11_session() {
+    local candidate
+    for candidate in plasmax11 plasma-x11 plasma; do
+      if [[ -f "/usr/share/xsessions/${candidate}.desktop" ]]; then
+        printf '%s' "${candidate}"
+        return 0
+      fi
+    done
+    return 1
+  }
+
+  if ! session="$(find_x11_session)"; then
+    log_info "No Plasma X11 session present; installing plasma-workspace-x11"
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get install -y plasma-workspace-x11 >/dev/null 2>&1 \
+      || log_warn "plasma-workspace-x11 install failed"
+    session="$(find_x11_session || true)"
+  fi
+
+  if [[ -z "${session}" ]]; then
+    log_warn "Could not find a Plasma X11 session; leaving the default as is"
+    return 0
+  fi
+
+  mkdir -p /etc/lightdm/lightdm.conf.d
+  cat > /etc/lightdm/lightdm.conf.d/99-duckybox.conf <<EOF
+# Duckybox — default to Plasma on X11. Wayland breaks Peek, the conky VPN
+# overlay and KWin's compositing switch. Pick Wayland at the login screen
+# whenever you need it; this only sets the default.
+[Seat:*]
+user-session=${session}
+EOF
+  log_ok "Default session set to ${session} (X11)"
+}
+
+apply_desktop_as_user() {
+  if [[ "${#DESKTOPS[@]:-0}" -eq 0 ]]; then
+    log_info "No desktop to theme; skipping"
+    return 0
+  fi
+  if [[ "${DRY_RUN}" -eq 1 ]]; then
+    return 0
+  fi
+
+  # Run from the repo copy so the scripts can source scripts/lib/common.sh.
+  local scripts_dir="${OPT_DIR}/repo/scripts"
+  [[ -d "${scripts_dir}" ]] || scripts_dir="${REPO_ROOT}/scripts"
+
+  local desktop apply
+  for desktop in "${DESKTOPS[@]}"; do
+    apply="${scripts_dir}/apply-${desktop}-theme.sh"
+    if [[ ! -f "${apply}" ]]; then
+      log_warn "Missing ${apply}"
+      continue
+    fi
+    log_info "Applying the ${desktop} desktop theme as ${TARGET_USER}"
+    sudo -u "${TARGET_USER}" -H \
+      DUCKYBOX_OPT="${OPT_DIR}" \
+      DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-}" \
+      bash "${apply}" \
+      || log_warn "${desktop} theming returned non-zero (a graphical session may be required)"
+  done
+  log_ok "Desktop theming finished"
 }
 
 # ---------------------------------------------------------------------------
@@ -702,8 +894,10 @@ main() {
   init_log
   require_parrot
   detect_user
+  detect_desktops
 
   install_base_packages
+  install_desktop_packages
   install_obsidian
   install_sysreptor
   regen_brand_assets
@@ -716,28 +910,35 @@ main() {
   setup_plymouth
   setup_grub_theme
   setup_greeter
-  apply_mate_as_user
+  setup_x11_session
+  apply_desktop_as_user
 
   log_ok "=== Duckybox install complete ==="
+  local themed="${DESKTOPS[*]:-none}"
   cat <<EOF
 
-Duckybox is installed.
+Duckybox is installed. Desktops themed: ${themed}
 
 Next steps:
-  1. Reboot. You should see the violet GRUB menu, then the Duckybox splash,
-     then a themed login screen.
-  2. Log into MATE: Duckybox GTK theme, violet Papirus icons, Plank dock and
-     the duck wallpaper.
-  3. Add the VPN indicator to the top panel (one time):
-       Right-click top panel -> Add to Panel -> Command
-       Command: ${OPT_DIR}/vpnpanel.sh   Interval: 5
-     (details: ${TARGET_HOME}/.config/duckybox/VPN_PANEL.txt)
-  4. Connect OpenVPN (tun0) to see the VPN IP in the panel and prompt.
+  1. Reboot. You should see the violet GRUB menu, the Duckybox splash, then a
+     themed login screen.
+  2. At the login screen confirm the session is Plasma on X11 (now the
+     default). Wayland breaks Peek, the conky VPN overlay and KWin's
+     compositing switch.
+  3. Log in. Colours, icons, wallpaper and the VPN overlay in the top-right
+     corner apply on their own. Plasma rewrites its config when a session
+     ends, so if something looks stock, log out and back in once.
+  4. Connect OpenVPN (tun0) to see the address appear top-right and in the
+     shell prompt.
   5. Apps: Flameshot, Peek, Obsidian, SysReptor (http://127.0.0.1:8000/).
+
+Re-apply the desktop theme at any time:
+  ${OPT_DIR}/apply-desktop.sh
 
 Verify everything at once:
   bash ${OPT_DIR}/duckybox-doctor.sh
 
+Notes for your desktop: ${TARGET_HOME}/.config/duckybox/
 Log file: ${LOG_FILE}
 EOF
 }

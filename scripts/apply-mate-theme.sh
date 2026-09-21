@@ -5,6 +5,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/common.sh
+source "${SCRIPT_DIR}/lib/common.sh"
+
 OPT_DIR="${DUCKYBOX_OPT:-/opt/duckybox}"
 if [[ -d "${OPT_DIR}/repo/configs" ]]; then
   REPO_ROOT="${OPT_DIR}/repo"
@@ -12,16 +15,9 @@ else
   REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 fi
 HOME_DIR="${HOME}"
-WALLPAPER_DIR="/usr/share/backgrounds/duckybox"
 
-log() { printf '[duckybox-mate] %s\n' "$*"; }
-
-backup_file() {
-  local f="$1"
-  if [[ -f "$f" && ! -f "${f}.duckybox.bak" ]]; then
-    cp -a "$f" "${f}.duckybox.bak"
-  fi
-}
+log() { duckybox_log mate "$@"; }
+backup_file() { duckybox_backup "$1"; }
 
 apply_gtk() {
   log "Applying GTK overrides"
@@ -32,33 +28,6 @@ apply_gtk() {
   cp -f "${REPO_ROOT}/configs/gtk/gtk-3.0/gtk.css" "${HOME_DIR}/.config/gtk-3.0/gtk.css"
   cp -f "${REPO_ROOT}/configs/gtk/gtk-3.0/settings.ini" "${HOME_DIR}/.config/gtk-3.0/settings.ini"
   cp -f "${REPO_ROOT}/configs/gtk/gtk-4.0/gtk.css" "${HOME_DIR}/.config/gtk-4.0/gtk.css"
-}
-
-# Pick the wallpaper closest to the current screen width.
-pick_wallpaper() {
-  local width=1920
-  if command -v xrandr >/dev/null 2>&1; then
-    local detected
-    detected="$(xrandr 2>/dev/null | awk '/\*/ {print $1; exit}' | cut -d x -f1)"
-    if [[ "${detected}" =~ ^[0-9]+$ ]]; then
-      width="${detected}"
-    fi
-  fi
-
-  local choice
-  if (( width >= 3840 )); then
-    choice="duckybox-3840x2160.png"
-  elif (( width >= 2560 )); then
-    choice="duckybox-2560x1440.png"
-  else
-    choice="duckybox-1920x1080.png"
-  fi
-
-  if [[ -f "${WALLPAPER_DIR}/${choice}" ]]; then
-    printf '%s' "${WALLPAPER_DIR}/${choice}"
-  elif [[ -f "${WALLPAPER_DIR}/duckybox-1920x1080.png" ]]; then
-    printf '%s' "${WALLPAPER_DIR}/duckybox-1920x1080.png"
-  fi
 }
 
 apply_theme_and_perf() {
@@ -85,7 +54,7 @@ apply_theme_and_perf() {
   gsettings set org.mate.background picture-options 'zoom' 2>/dev/null || true
 
   local wallpaper
-  wallpaper="$(pick_wallpaper)"
+  wallpaper="$(duckybox_pick_wallpaper)"
   if [[ -n "${wallpaper}" ]]; then
     log "Wallpaper: ${wallpaper}"
     gsettings set org.mate.background picture-filename "${wallpaper}" 2>/dev/null || true
@@ -188,9 +157,13 @@ setup_vpn_panel_hint() {
   local hint="${HOME_DIR}/.config/duckybox/VPN_PANEL.txt"
   mkdir -p "$(dirname "${hint}")"
   cat > "${hint}" <<EOF
-Duckybox VPN panel
-==================
-To show your VPN IP on the top panel (Pwnbox-style):
+Duckybox VPN indicator
+======================
+The conky overlay in the top-right corner is set up automatically and needs
+no configuration. Its config lives at:
+  ~/.config/conky/duckybox-vpn.conkyrc
+
+If you would rather have it inside the MATE panel instead:
 
 1. Right-click the top panel -> Add to Panel
 2. Add "Command"
@@ -198,9 +171,9 @@ To show your VPN IP on the top panel (Pwnbox-style):
 4. Command: ${OPT_DIR}/vpnpanel.sh
 5. Interval: 5 seconds
 
-It shows "VPN: <ip>" when tun0 is up, or "VPN: Disconnected".
+Either way it shows the tun0 address, or that the VPN is down.
 EOF
-  log "Wrote VPN panel instructions to ${hint}"
+  log "Wrote VPN indicator notes to ${hint}"
 }
 
 bind_flameshot() {
@@ -225,6 +198,7 @@ main() {
   apply_menu_logo
   apply_terminal
   setup_plank
+  duckybox_setup_vpn_overlay mate "${REPO_ROOT}" "${HOME_DIR}"
   setup_vpn_panel_hint
   bind_flameshot
   log "Duckybox desktop applied"

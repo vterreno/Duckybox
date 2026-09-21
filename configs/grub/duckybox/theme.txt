@@ -1,6 +1,11 @@
 # Duckybox GRUB theme — violet on deep purple
 
 desktop-image: "background.png"
+# Crop instead of the default stretch, so the duck keeps its proportions on
+# screens that are not 16:9.
+desktop-image-scale-method: "crop"
+desktop-image-h-align: "center"
+desktop-image-v-align: "center"
 desktop-color: "#12071F"
 title-text: ""
 terminal-font: "Unifont Regular 16"

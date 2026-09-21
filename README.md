@@ -11,16 +11,28 @@ Brand violet `#4B0E8F` · accent `#7C3AED` · backdrop `#12071F`
 | GRUB | Violet menu with the duck background and a violet timeout bar |
 | Plymouth | Duck mark fading in over deep violet with a real progress bar |
 | LightDM | Greeter background, Duckybox GTK theme and violet icons |
-| MATE desktop | `Duckybox` GTK theme (GTK2/3/4 plus `metacity-1` for Marco), violet Papirus icons, duck wallpaper picked by resolution |
-| Panel | VPN IP from `tun0` in the top panel, Pwnbox-style |
-| Dock | Plank with a violet `Duckybox` dock theme |
-| Terminal | mate-terminal palette plus OSC sequences for any terminal |
+| MATE | `Duckybox` GTK theme (GTK2/3/4 plus `metacity-1` for Marco), violet Papirus icons, Plank dock, duck wallpaper picked by resolution |
+| KDE Plasma | `Duckybox` colour scheme with violet titlebars, Papirus-Dark violet icons, Konsole profile, same wallpaper |
+| VPN | `tun0` address in the top-right corner via conky, on either desktop |
+| Terminal | mate-terminal and Konsole palettes, plus OSC sequences for any terminal |
 | tmux | Violet status bar, window and pane styling |
 | bash | Duck banner, violet prompt with the VPN IP inline |
 
+Both desktops are supported and detected automatically. `--session auto` themes whichever of MATE and KDE is installed, so a machine with both gets both.
+
 ## Performance
 
-MATE stays, but the heavy parts go: Marco compositing off, `reduced-resources` on, animations disabled, desktop icon drawing off, the bottom panel replaced by Plank. `mate-*` packages are never purged, since removing them breaks networking and VPN on Parrot.
+The desktop stays, the expensive parts go.
+
+On MATE: Marco compositing off, `reduced-resources` on, animations disabled, desktop icon drawing off, bottom panel replaced by Plank.
+
+On KDE: KWin compositing off (X11 only), animation duration factor zero, blur and slide effects disabled, and Baloo file indexing disabled, which is the biggest single win on a pentest box.
+
+`mate-*` and `plasma-*` packages are never purged, since removing them breaks networking and VPN on Parrot.
+
+## X11 versus Wayland
+
+The installer makes the Plasma **X11** session the LightDM default, because Wayland breaks three things: Peek does not work at all, the conky VPN overlay needs X11, and KWin ignores the compositing switch. Wayland stays available at the login screen; only the default changes. Pass `--keep-wayland` to leave the default alone.
 
 ## Tools installed
 
@@ -28,10 +40,10 @@ MATE stays, but the heavy parts go: Marco compositing off, `reduced-resources` o
 
 ## Requirements
 
-- Parrot OS Security or Home with **MATE** and **LightDM**
+- Parrot OS Security or Home with **MATE** or **KDE Plasma**, and **LightDM**
 - root via `sudo`
 - Network for `apt`, the GTK theme build, Obsidian and Docker images
-- amd64 for the Obsidian auto-install; ~8 GB RAM for SysReptor
+- **amd64** for Obsidian and SysReptor. On arm64 both are skipped with a `WARN`: the Obsidian `.deb` is amd64-only and the SysReptor images are not built for arm64. Everything else, including the GTK theme build, works on arm64.
 
 ## Install
 
@@ -46,6 +58,8 @@ sudo ./install.sh
 | `--dry-run` | Log every action without touching the system |
 | `--verbose` | Extra debug lines in the log |
 | `--regen-brand` | Rebuild all brand assets from the logo |
+| `--session WHICH` | Desktop to theme: `auto` (default), `mate`, `kde`, `both`, `none` |
+| `--keep-wayland` | Do not make Plasma X11 the default session |
 | `--skip-obsidian` | Do not download Obsidian |
 | `--skip-sysreptor` | Do not install Docker or SysReptor |
 | `--skip-plymouth` | Leave the boot splash alone |
@@ -55,13 +69,17 @@ sudo ./install.sh
 ## After install
 
 1. **Reboot.** GRUB, the splash and the login screen should all be violet.
-2. Log into MATE. Theme, icons, wallpaper and Plank apply automatically.
-3. Add the VPN indicator to the top panel, one time only:
-   - Right-click the top panel → **Add to Panel** → **Command**
-   - Command: `/opt/duckybox/vpnpanel.sh`, interval `5`
-   - Also written to `~/.config/duckybox/VPN_PANEL.txt`
-4. Connect your OpenVPN profile so `tun0` gets an address.
+2. At the login screen, confirm the session is **Plasma (X11)**, now the default.
+3. Log in. Colours, icons, wallpaper and the VPN overlay apply on their own.
+4. Connect your OpenVPN profile so `tun0` gets an address; it shows up top-right and in the shell prompt.
 5. SysReptor: `/opt/duckybox/sysreptor-start.sh` and `sysreptor-stop.sh`. Log out and back in once if Docker denies permission.
+
+Plasma rewrites its configuration when a session ends, so edits made while a session is running can be undone. If something still looks stock, log out and back in, or re-apply:
+
+```bash
+/opt/duckybox/apply-desktop.sh          # auto-detects your session
+/opt/duckybox/apply-desktop.sh kde      # or force one
+```
 
 ## Verify
 
@@ -93,11 +111,15 @@ assets/brand/duckybox-logo.png     # the one source of truth for branding
 assets/duck.txt                    # braille duck, generated
 assets/{plymouth,wallpapers,grub,greeter,icons}/
 configs/{tmux,gtk,terminal,bash,plank,plymouth,grub,lightdm}/
+configs/kde/                       # colour scheme, Konsole profile
+configs/conky/                     # VPN overlay
 scripts/generate-brand.sh          # all asset generation
 scripts/install-gtk-theme.sh       # Orchis -> Duckybox violet, icon recolor
-scripts/apply-mate-theme.sh        # per-user desktop settings
+scripts/apply-mate-theme.sh        # per-user MATE settings
+scripts/apply-kde-theme.sh         # per-user Plasma settings
 scripts/duckybox-doctor.sh         # verification report
 scripts/vpnpanel.sh vpnbash.sh     # VPN IP for panel and prompt
+scripts/lib/common.sh              # shared helpers for the apply scripts
 scripts/lib/pbm2braille.py         # PNG -> braille converter
 ```
 
@@ -106,5 +128,6 @@ scripts/lib/pbm2braille.py         # PNG -> braille converter
 - Backups of replaced files use the `.duckybox.bak` suffix.
 - Obsidian, SysReptor and the GTK theme build are best-effort: failures log a `WARN` and the install continues.
 - If a machine was themed by the older Turfbox version, the installer removes its `~/.bashrc` block automatically.
-- Peek works best on X11, which is the Parrot MATE default.
 - On very fast boots the splash may only flash briefly; that is Plymouth, not the theme.
+- The VPN overlay sits above other windows by default. To put it behind them, change `above` to `below` in `~/.config/conky/duckybox-vpn.conkyrc`. If your panel is at the bottom, set `gap_y = 8`.
+- Parrot ships its own `GRUB_BACKGROUND`, and `grub-mkconfig` sources `/etc/default/grub.d/*.cfg` *after* `/etc/default/grub`, so a distro snippet can silently win. The installer disables the stock background and writes `/etc/default/grub.d/99-duckybox.cfg`, which is sourced last.

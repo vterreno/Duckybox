@@ -1,0 +1,43 @@
+-- Duckybox VPN indicator — top-right overlay, Pwnbox style.
+-- Works on any X11 desktop, so MATE and KDE share it.
+
+conky.config = {
+    alignment = 'top_right',
+    gap_x = 16,
+    gap_y = 44,          -- clears a top panel; set to 8 if your panel is at the bottom
+
+    own_window = true,
+    own_window_class = 'Conky',
+    own_window_title = 'duckybox-vpn',
+    own_window_type = 'normal',
+    own_window_transparent = true,
+    own_window_argb_visual = true,
+    own_window_argb_value = 0,
+    own_window_hints = 'undecorated,above,sticky,skip_taskbar,skip_pager',
+
+    double_buffer = true,
+    background = true,
+    update_interval = 5.0,
+
+    minimum_width = 210,
+    minimum_height = 0,
+    border_width = 0,
+    draw_borders = false,
+    draw_graph_borders = false,
+    draw_outline = false,
+    draw_shades = true,
+    default_shade_color = '000000',
+
+    use_xft = true,
+    font = 'DejaVu Sans Mono:bold:size=10',
+    override_utf8_locale = true,
+    default_color = 'A78BFA',
+
+    no_buffers = true,
+    cpu_avg_samples = 2,
+    short_units = true,
+}
+
+conky.text = [[
+${alignr}${if_existing /sys/class/net/tun0}${color 7C3AED}VPN ${color EDE9FE}${addr tun0}${else}${color 4C3A63}VPN offline${endif}
+]]
