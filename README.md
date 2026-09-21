@@ -112,6 +112,8 @@ That regenerates the transparent mark, the braille duck art, the Plymouth images
 
 The wallpaper is the one exception to being generated from the logo: if `assets/brand/duckybox-wallpaper.jpg` (or `.png`) exists, that artwork is scaled to the three desktop resolutions **and** used as the login background, instead of the generated gradient scene. Drop in any 16:9 image to change it; other aspect ratios are centre-cropped to fill. GRUB keeps its own generated background, since its menu needs the lower half of the screen empty.
 
+Artwork is written out as JPEG and generated scenes as PNG. Encoding photographic artwork as PNG would losslessly preserve the source's own JPEG artifacts at roughly ten times the size, so the wallpaper set stays around 1 MB instead of 11 MB. The apply scripts accept either extension. Supply the artwork at the highest resolution you have: the 3840x2160 output is a straight downscale when the source is large enough, and only upscales when it is not.
+
 The GTK theme is [Orchis](https://github.com/vinceliuice/Orchis-theme) with its purple palette overwritten by the Duckybox violet before `sassc` compiles it, installed as `Duckybox`. Icons are the packaged `Papirus-Dark` with folders relinked to their violet variants, the same mechanism `papirus-folders` uses.
 
 ## Layout

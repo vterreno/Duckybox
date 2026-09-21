@@ -179,7 +179,9 @@ find_wallpaper_art() {
 }
 
 # Scale artwork to a target resolution, cropping to fill if the aspect ratio
-# differs, then counter the softness that upscaling introduces.
+# differs, then counter the softness that resampling introduces. Output format
+# follows the destination extension; JPEG keeps these files ~10x smaller than
+# PNG, which would otherwise losslessly preserve the source's JPEG artifacts.
 scale_artwork() {
   local src="$1" w="$2" h="$3" dest="$4"
   im "${src}" \
@@ -187,6 +189,7 @@ scale_artwork() {
     -resize "${w}x${h}^" \
     -gravity center -extent "${w}x${h}" \
     -unsharp 0x1+0.6+0.02 \
+    -quality 92 \
     -strip "${dest}"
 }
 
@@ -202,10 +205,14 @@ make_wallpapers() {
   for res in 1920x1080 2560x1440 3840x2160; do
     if [[ -n "${art}" ]]; then
       log "Scaling wallpaper artwork to ${res}"
-      scale_artwork "${art}" "${res%x*}" "${res#*x}" "${out}/duckybox-${res}.png"
+      scale_artwork "${art}" "${res%x*}" "${res#*x}" "${out}/duckybox-${res}.jpg"
+      # Drop a stale PNG from a previous run so only one file per resolution
+      # exists and the picker cannot choose the old one.
+      rm -f "${out}/duckybox-${res}.png"
     else
       log "Rendering wallpaper ${res}"
       compose_scene "${res%x*}" "${res#*x}" "${out}/duckybox-${res}.png"
+      rm -f "${out}/duckybox-${res}.jpg"
     fi
   done
 }

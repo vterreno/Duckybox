@@ -33,25 +33,37 @@ duckybox_screen_width() {
   fi
 }
 
-# Wallpaper whose resolution best fits the current screen.
+# First existing file among the given basenames, as a full path.
+duckybox_first_wallpaper() {
+  local name ext
+  for name in "$@"; do
+    for ext in jpg png; do
+      if [[ -f "${DUCKYBOX_WALLPAPER_DIR}/${name}.${ext}" ]]; then
+        printf '%s' "${DUCKYBOX_WALLPAPER_DIR}/${name}.${ext}"
+        return 0
+      fi
+    done
+  done
+  return 1
+}
+
+# Wallpaper whose resolution best fits the current screen, falling back to the
+# smallest one. Artwork is shipped as JPEG and generated scenes as PNG, so both
+# extensions are tried.
 duckybox_pick_wallpaper() {
   local width choice
   width="$(duckybox_screen_width)"
   [[ "${width}" =~ ^[0-9]+$ ]] || width=1920
 
   if (( width >= 3840 )); then
-    choice="duckybox-3840x2160.png"
+    choice="duckybox-3840x2160"
   elif (( width >= 2560 )); then
-    choice="duckybox-2560x1440.png"
+    choice="duckybox-2560x1440"
   else
-    choice="duckybox-1920x1080.png"
+    choice="duckybox-1920x1080"
   fi
 
-  if [[ -f "${DUCKYBOX_WALLPAPER_DIR}/${choice}" ]]; then
-    printf '%s' "${DUCKYBOX_WALLPAPER_DIR}/${choice}"
-  elif [[ -f "${DUCKYBOX_WALLPAPER_DIR}/duckybox-1920x1080.png" ]]; then
-    printf '%s' "${DUCKYBOX_WALLPAPER_DIR}/duckybox-1920x1080.png"
-  fi
+  duckybox_first_wallpaper "${choice}" "duckybox-1920x1080" || true
 }
 
 # Start the conky VPN overlay and make it persist across logins.

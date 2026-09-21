@@ -573,9 +573,15 @@ install_wallpapers() {
     return 0
   fi
   mkdir -p "${BG_DIR}"
-  if compgen -G "${REPO_ROOT}/assets/wallpapers/*.png" >/dev/null; then
-    cp -f "${REPO_ROOT}/assets/wallpapers/"*.png "${BG_DIR}/"
-  fi
+  # Artwork ships as JPEG, generated scenes as PNG; clear the directory first so
+  # a leftover file from a previous style cannot be picked instead.
+  rm -f "${BG_DIR}"/duckybox-*x*.png "${BG_DIR}"/duckybox-*x*.jpg
+  local ext
+  for ext in png jpg; do
+    if compgen -G "${REPO_ROOT}/assets/wallpapers/*.${ext}" >/dev/null; then
+      cp -f "${REPO_ROOT}/assets/wallpapers/"*."${ext}" "${BG_DIR}/"
+    fi
+  done
   if [[ -f "${REPO_ROOT}/assets/greeter/duckybox-login.jpg" ]]; then
     cp -f "${REPO_ROOT}/assets/greeter/duckybox-login.jpg" "${BG_DIR}/duckybox-login.jpg"
   fi
