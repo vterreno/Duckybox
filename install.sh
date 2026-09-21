@@ -754,18 +754,88 @@ setup_plymouth() {
     fi
   done
 
-  if command -v plymouth-set-default-theme >/dev/null 2>&1; then
-    plymouth-set-default-theme duckybox || log_warn "plymouth-set-default-theme failed"
-  else
-    log_warn "plymouth-set-default-theme not found; theme copied but not activated"
-  fi
-
+  pin_plymouth_theme duckybox
   set_grub_splash on
 
   if command -v update-initramfs >/dev/null 2>&1; then
     update-initramfs -u || log_warn "update-initramfs failed"
   fi
+  verify_plymouth_initramfs
   log_ok "Plymouth theme installed (${PLYMOUTH_STYLE})"
+}
+
+# Make a theme the one Plymouth actually uses. Three mechanisms decide this and
+# they do not agree, so a theme can be "installed" while a distro spinner still
+# draws at boot:
+#   - /etc/plymouth/plymouthd.conf, which wins over everything else
+#   - the default.plymouth alternative, which is what the initramfs hook copies
+#   - plymouth-set-default-theme, a wrapper over the alternative
+pin_plymouth_theme() {
+  local theme="$1"
+  local themefile="/usr/share/plymouth/themes/${theme}/${theme}.plymouth"
+
+  mkdir -p /etc/plymouth
+  if [[ -f /etc/plymouth/plymouthd.conf ]] \
+    && [[ ! -f /etc/plymouth/plymouthd.conf.duckybox.bak ]]; then
+    cp -a /etc/plymouth/plymouthd.conf /etc/plymouth/plymouthd.conf.duckybox.bak
+  fi
+  # ShowDelay=0 matters: with a delay Plymouth leaves the screen to whatever
+  # was there before it starts drawing.
+  cat > /etc/plymouth/plymouthd.conf <<EOF
+# Duckybox — takes precedence over the default.plymouth alternative.
+[Daemon]
+Theme=${theme}
+ShowDelay=0
+DeviceTimeout=8
+EOF
+
+  if command -v plymouth-set-default-theme >/dev/null 2>&1; then
+    plymouth-set-default-theme "${theme}" >/dev/null 2>&1 \
+      || log_warn "plymouth-set-default-theme failed"
+    local active
+    active="$(plymouth-set-default-theme 2>/dev/null || true)"
+    if [[ "${active}" == "${theme}" ]]; then
+      log_info "Default Plymouth theme is now ${active}"
+    else
+      log_warn "Default Plymouth theme reads as '${active}', not ${theme}"
+    fi
+  elif command -v update-alternatives >/dev/null 2>&1 && [[ -f "${themefile}" ]]; then
+    # The mechanism plymouth-set-default-theme wraps, in case it is absent.
+    update-alternatives --install /usr/share/plymouth/themes/default.plymouth \
+      default.plymouth "${themefile}" 200 >/dev/null 2>&1 || true
+    update-alternatives --set default.plymouth "${themefile}" >/dev/null 2>&1 || true
+    log_info "Set the default.plymouth alternative to ${theme}"
+  else
+    log_warn "No way to set the default theme; plymouthd.conf alone will have to do"
+  fi
+}
+
+# The initramfs carries its own copy of the theme. A stale one means early boot
+# draws the previously baked splash, which is where an unexpected spinner comes
+# from before ours takes over after switch-root.
+verify_plymouth_initramfs() {
+  command -v lsinitramfs >/dev/null 2>&1 || return 0
+  local img="/boot/initrd.img-$(uname -r)"
+  [[ -f "${img}" ]] || return 0
+
+  local listing
+  listing="$(lsinitramfs "${img}" 2>/dev/null || true)"
+  [[ -n "${listing}" ]] || return 0
+
+  if printf '%s\n' "${listing}" | grep -q 'plymouth/themes/duckybox'; then
+    log_ok "Duckybox theme is inside ${img}"
+  else
+    log_warn "Duckybox theme is NOT in ${img}; early boot will show another splash"
+  fi
+
+  # Any other theme in there can draw before ours does.
+  local others
+  others="$(printf '%s\n' "${listing}" \
+    | sed -n 's|.*plymouth/themes/\([^/]*\)/.*|\1|p' \
+    | grep -v '^duckybox$' | sort -u | tr '\n' ' ')"
+  if [[ -n "${others// /}" ]]; then
+    log_info "Other themes present in the initramfs: ${others}"
+  fi
 }
 
 # set_grub_splash <on|off> — the splash keyword is what tells the kernel to

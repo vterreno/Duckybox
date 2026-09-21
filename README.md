@@ -40,6 +40,8 @@ The stage between GRUB and the login screen has three styles, picked with `--ply
 
 Switching is a re-run, never a file edit: `sudo ./install.sh --plymouth full`. Both variants live in `configs/plymouth/duckybox/` and the installer copies the chosen one to `duckybox.script`.
 
+Neither variant draws a spinner or throbber, so if you see one, it belongs to another theme. Three things decide which theme runs and they do not agree, which is why a theme can be installed while a distro splash still draws: `/etc/plymouth/plymouthd.conf` wins over the `default.plymouth` alternative, and the initramfs carries its own copy of the theme that draws during early boot, before the root filesystem is mounted. The installer sets all three and warns if the initramfs does not contain the Duckybox theme. `duckybox-doctor` reports each one, including any other theme still baked into the initramfs — `spinner` and `bgrt` are the usual suspects. Plasma's own startup splash, a separate loader between the login screen and the desktop, is disabled by the KDE script.
+
 ## X11 versus Wayland
 
 The installer makes the Plasma **X11** session the LightDM default, because Wayland breaks three things: Peek does not work at all, the conky VPN overlay needs X11, and KWin ignores the compositing switch. Wayland stays available at the login screen; only the default changes. Pass `--keep-wayland` to leave the default alone.

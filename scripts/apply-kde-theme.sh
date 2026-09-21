@@ -173,6 +173,11 @@ tune_performance() {
 
   # Animations across Plasma widgets and dialogs.
   kwrite kdeglobals KDE AnimationDurationFactor 0
+
+  # Plasma's own startup splash is a second loader, between the login screen
+  # and the desktop, and it is pure waiting.
+  kwrite ksplashrc KSplash Engine none
+  kwrite ksplashrc KSplash Theme None
   kwrite kdeglobals General AllowKDEAppsToRememberWindowPositions true
 
   # Visual effects that cost the most.

@@ -121,7 +121,21 @@ section "Boot chain"
 check "Plymouth theme dir" test -d /usr/share/plymouth/themes/duckybox
 check "Plymouth logo" test -f /usr/share/plymouth/themes/duckybox/logo.png
 if command -v plymouth-set-default-theme >/dev/null 2>&1; then
-  printf '  active plymouth theme: %s\n' "$(plymouth-set-default-theme 2>/dev/null)"
+  printf '  default.plymouth alternative: %s\n' "$(plymouth-set-default-theme 2>/dev/null)"
+fi
+# plymouthd.conf wins over the alternative, so it is the one that decides.
+if [[ -f /etc/plymouth/plymouthd.conf ]]; then
+  printf '  plymouthd.conf Theme: %s\n' \
+    "$(sed -n 's/^ *Theme *= *//p' /etc/plymouth/plymouthd.conf | head -n1)"
+else
+  printf '  plymouthd.conf: absent\n'
+fi
+# A theme baked into the initramfs draws before the one on the root filesystem.
+initrd="/boot/initrd.img-$(uname -r)"
+if command -v lsinitramfs >/dev/null 2>&1 && [[ -f "${initrd}" ]]; then
+  themes="$(lsinitramfs "${initrd}" 2>/dev/null \
+    | sed -n 's|.*plymouth/themes/\([^/]*\)/.*|\1|p' | sort -u | tr '\n' ' ')"
+  printf '  themes in initramfs: %s\n' "${themes:-none}"
 fi
 # Each variant carries a "duckybox-style:" marker, so the installed style can be
 # reported without guessing from its contents.
