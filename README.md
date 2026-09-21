@@ -13,7 +13,7 @@ Brand violet `#4B0E8F` · accent `#7C3AED` · backdrop `#12071F`
 | Login screen | LightDM greeter or SDDM, whichever the machine actually uses, with the duck background |
 | MATE | `Duckybox` GTK theme (GTK2/3/4 plus `metacity-1` for Marco), violet Papirus icons, Plank dock, duck wallpaper picked by resolution |
 | KDE Plasma | `Duckybox` colour scheme with violet titlebars, Papirus-Dark violet icons, Konsole profile, same wallpaper |
-| VPN | `tun0` address in the top-right corner via conky, on either desktop |
+| VPN | `tun0` address in the top panel (Command applet on MATE, tray + plasmoid on KDE) |
 | Terminal | mate-terminal and Konsole palettes, plus OSC sequences for any terminal |
 | tmux | Violet status bar, window and pane styling |
 | bash | Duck banner, violet prompt with the VPN IP inline |
@@ -52,7 +52,7 @@ Neither variant draws a spinner or throbber, so if you see one, it belongs to an
 
 ## X11 versus Wayland
 
-The installer makes the Plasma **X11** session the default, because Wayland breaks three things: Peek does not work at all, the conky VPN overlay needs X11, and KWin ignores the compositing switch. Wayland stays available at the login screen; only the default changes. Pass `--keep-wayland` to leave the default alone.
+The installer makes the Plasma **X11** session the default, because Wayland breaks Peek and KWin ignores the compositing switch. Wayland stays available at the login screen; only the default changes. Pass `--keep-wayland` to leave the default alone.
 
 How the default is set depends on the display manager, which is detected from the `display-manager.service` systemd alias rather than assumed. LightDM takes a `user-session` in `/etc/lightdm/lightdm.conf.d/99-duckybox.conf`. SDDM has no equivalent setting for interactive logins, so the installer seeds the session it remembers per user in `/var/lib/sddm/state.conf`.
 
@@ -64,7 +64,28 @@ The installer now leaves a one-shot autostart entry that re-applies the theme ab
 
 ## Tools installed
 
-**Flameshot**, **Peek**, **Obsidian** (amd64 `.deb` from GitHub Releases) and **SysReptor** (Docker, at `/opt/sysreptor`, UI on `http://127.0.0.1:8000/`).
+**Flameshot**, **Peek**, **OpenVPN** (`openvpn-connect`), **linpeas** / **winpeas** (PEASS-ng into `/opt/duckybox/tools`), **Obsidian** (from GitHub Releases, per architecture) and **SysReptor** (Docker, at `/opt/sysreptor`, UI on `http://127.0.0.1:8000/`).
+
+Parrot ships four virtual desktops by default; the installer reduces that to **one** on both MATE and KDE.
+
+The VPN address is shown **in the top panel**, not as a floating corner overlay: a MATE Command applet running `vpnpanel.sh`, plus a system-tray indicator (`vpn-indicator.py`) on both desktops, and a Plasma plasmoid on KDE.
+
+### Architecture detection
+
+The installer detects the CPU before installing anything third-party and reports it as a family and a word size, for example `x86 64-bit (amd64)` or `arm 64-bit (arm64)`. `dpkg --print-architecture` decides, falling back to `uname -m` only when dpkg is absent, because a 64-bit kernel can run a 32-bit userland where every `.deb` is 32-bit.
+
+Only the downloads that are not apt packages care:
+
+| | x86_64 / amd64 | arm64 / aarch64 | 32-bit (i386, armhf) |
+|---|---|---|---|
+| Obsidian | `.deb` from GitHub Releases | arm64 tarball unpacked to `/opt/obsidian` | not published, `WARN` and skip |
+| SysReptor | amd64 images | arm64 images, picked from the Docker manifest | no image, `WARN` and skip |
+
+Obsidian publishes no arm64 `.deb`, so on arm64 the tarball is installed instead: it lands in `/opt/obsidian`, gets a symlink at `/usr/local/bin/obsidian` and a desktop entry, and its `chrome-sandbox` helper is made setuid root, which a `.deb` would do from its postinst and Electron refuses to start without.
+
+The download URL is resolved from the recent release list rather than `/releases/latest`, since the newest Obsidian release is often a mobile-only build whose only asset is an `.apk`.
+
+Everything else — apt packages, the GTK theme build, the boot chain, both desktops — is architecture independent and installs identically.
 
 ### SysReptor needs real Docker, not podman
 
@@ -77,7 +98,7 @@ By default the installer detects this and skips SysReptor with an explanation ra
 - Parrot OS Security or Home with **MATE** or **KDE Plasma**, behind **LightDM** or **SDDM**
 - root via `sudo`
 - Network for `apt`, the GTK theme build, Obsidian and Docker images
-- **amd64** for Obsidian only. Its `.deb` on GitHub Releases is amd64-only, so on arm64 it is skipped with a `WARN`. SysReptor publishes both `amd64` and `arm64` images and works on either, and so does everything else including the GTK theme build.
+- **amd64 or arm64.** Both are fully supported; the installer detects which and picks the matching Obsidian download and SysReptor images. On a 32-bit userland everything themes normally, but Obsidian and SysReptor are skipped with a `WARN` because neither publishes 32-bit builds.
 
 ## Install
 
@@ -152,13 +173,16 @@ assets/duck.txt                    # braille duck, generated
 assets/{plymouth,wallpapers,grub,greeter,icons}/
 configs/{tmux,gtk,terminal,bash,plank,plymouth,grub,lightdm}/
 configs/kde/                       # colour scheme, Konsole profile
-configs/conky/                     # VPN overlay
+configs/conky/                     # legacy (no longer used; VPN is in the panel)
+configs/kde/plasmoids/             # Duckybox VPN panel plasmoid
 scripts/generate-brand.sh          # all asset generation
 scripts/install-gtk-theme.sh       # Orchis -> Duckybox violet, icon recolor
 scripts/apply-mate-theme.sh        # per-user MATE settings
 scripts/apply-kde-theme.sh         # per-user Plasma settings
 scripts/duckybox-doctor.sh         # verification report
 scripts/vpnpanel.sh vpnbash.sh     # VPN IP for panel and prompt
+scripts/vpn-indicator.py           # top-panel tray indicator
+scripts/openvpn-connect.sh         # OpenVPN profile helper
 scripts/lib/common.sh              # shared helpers for the apply scripts
 scripts/lib/pbm2braille.py         # PNG -> braille converter
 ```
@@ -169,5 +193,4 @@ scripts/lib/pbm2braille.py         # PNG -> braille converter
 - Obsidian, SysReptor and the GTK theme build are best-effort: failures log a `WARN` and the install continues.
 - If a machine was themed by the older Turfbox version, the installer removes its `~/.bashrc` block automatically.
 - On very fast boots the splash may only flash briefly; that is Plymouth, not the theme.
-- The VPN overlay sits above other windows by default. To put it behind them, change `above` to `below` in `~/.config/conky/duckybox-vpn.conkyrc`. If your panel is at the bottom, set `gap_y = 8`.
 - Parrot ships its own `GRUB_BACKGROUND`, and `grub-mkconfig` sources `/etc/default/grub.d/*.cfg` *after* `/etc/default/grub`, so a distro snippet can silently win. The installer disables the stock background and writes `/etc/default/grub.d/99-duckybox.cfg`, which is sourced last.

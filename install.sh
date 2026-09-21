@@ -29,6 +29,21 @@ FORCE_DOCKER=0
 # XKB name for Spanish (Latin America). Override with --keyboard.
 KEYBOARD_LAYOUT="latam"
 
+# Rows collected during install and printed as a table at the end.
+# Each entry is "Component|Status".
+SUMMARY_ROWS=()
+
+summary_set() {
+  local component="$1" status="$2" i
+  for i in "${!SUMMARY_ROWS[@]}"; do
+    if [[ "${SUMMARY_ROWS[$i]}" == "${component}|"* ]]; then
+      SUMMARY_ROWS[$i]="${component}|${status}"
+      return 0
+    fi
+  done
+  SUMMARY_ROWS+=("${component}|${status}")
+}
+
 LOG_FILE="/var/log/duckybox-install.log"
 OPT_DIR="/opt/duckybox"
 THEME_PLYMOUTH="/usr/share/plymouth/themes/duckybox"
@@ -36,6 +51,9 @@ THEME_GRUB="/boot/grub/themes/duckybox"
 BG_DIR="/usr/share/backgrounds/duckybox"
 ICON_DIR="/usr/share/icons/duckybox"
 PLANK_THEME_DIR="/usr/share/plank/themes/Duckybox"
+OBSIDIAN_DIR="/opt/obsidian"
+TOOLS_DIR="/opt/duckybox/tools"
+PEASS_RELEASE_API="https://api.github.com/repos/peass-ng/PEASS-ng/releases/latest"
 SYSREPTOR_INSTALL_URL="https://docs.sysreptor.com/install.sh"
 SYSREPTOR_DIR_DEFAULT="/opt/sysreptor"
 
@@ -197,7 +215,66 @@ require_parrot() {
   else
     log_ok "Detected Parrot OS (${PRETTY_NAME:-Parrot})"
   fi
-  log_info "Architecture: $(dpkg --print-architecture 2>/dev/null || uname -m)"
+}
+
+# ---------------------------------------------------------------------------
+# CPU architecture
+# ---------------------------------------------------------------------------
+
+# What this machine is, in the three forms the rest of the installer needs: the
+# Debian package architecture, the family (x86 or arm) and the word size. Every
+# third-party download below branches on these, because upstreams publish
+# different artifacts per family and several are 64-bit only.
+ARCH_DEB=""
+ARCH_UNAME=""
+ARCH_FAMILY=""
+ARCH_BITS=""
+
+detect_arch() {
+  ARCH_UNAME="$(uname -m)"
+  # dpkg is authoritative on Debian: a 64-bit kernel with a 32-bit userland
+  # reports x86_64 or aarch64 from uname while apt and every .deb are 32-bit.
+  ARCH_DEB="$(dpkg --print-architecture 2>/dev/null || true)"
+
+  if [[ -z "${ARCH_DEB}" ]]; then
+    case "${ARCH_UNAME}" in
+      x86_64|amd64)        ARCH_DEB="amd64" ;;
+      i386|i486|i586|i686) ARCH_DEB="i386" ;;
+      aarch64|arm64)       ARCH_DEB="arm64" ;;
+      armv7l|armv6l|armhf) ARCH_DEB="armhf" ;;
+      *)                   ARCH_DEB="${ARCH_UNAME}" ;;
+    esac
+  fi
+
+  case "${ARCH_DEB}" in
+    amd64)       ARCH_FAMILY="x86"; ARCH_BITS=64 ;;
+    i386)        ARCH_FAMILY="x86"; ARCH_BITS=32 ;;
+    arm64)       ARCH_FAMILY="arm"; ARCH_BITS=64 ;;
+    armhf|armel) ARCH_FAMILY="arm"; ARCH_BITS=32 ;;
+    *)           ARCH_FAMILY="other"; ARCH_BITS="?" ;;
+  esac
+
+  local model=""
+  if [[ -r /proc/cpuinfo ]]; then
+    model="$(sed -n 's/^\(model name\|Model\|Hardware\)[[:space:]]*:[[:space:]]*//p' \
+      /proc/cpuinfo | head -n1)"
+  fi
+
+  if [[ "${ARCH_FAMILY}" == "other" ]]; then
+    log_ok "Architecture: ${ARCH_DEB} (uname ${ARCH_UNAME}), neither x86 nor arm"
+  else
+    log_ok "Architecture: ${ARCH_FAMILY} ${ARCH_BITS}-bit (${ARCH_DEB}, uname ${ARCH_UNAME})"
+  fi
+  [[ -n "${model}" ]] && log_info "CPU: ${model}"
+
+  if [[ "${ARCH_FAMILY}" == "other" ]]; then
+    log_warn "Unrecognised architecture ${ARCH_DEB}; third-party downloads will be skipped"
+  elif [[ "${ARCH_BITS}" == "32" ]]; then
+    log_warn "32-bit userland: Obsidian and SysReptor publish 64-bit builds only"
+  fi
+
+  # Everything else — apt packages, the GTK theme build, the boot chain, both
+  # desktops — is architecture independent and installs the same either way.
 }
 
 # Which desktops this machine can actually run. Populates DESKTOPS.
@@ -260,7 +337,6 @@ install_base_packages() {
     plymouth \
     plymouth-themes \
     tmux \
-    conky-all \
     fonts-dejavu-core \
     flameshot \
     imagemagick \
@@ -271,7 +347,21 @@ install_base_packages() {
     openssl \
     uuid-runtime \
     coreutils \
-    sed
+    sed \
+    openvpn \
+    python3 \
+    python3-gi \
+    gir1.2-gtk-3.0
+  # AppIndicator backends differ across Parrot releases; try both.
+  if [[ "${DRY_RUN}" -eq 0 ]]; then
+    apt-get install -y --no-install-recommends \
+      gir1.2-ayatanaappindicator3-0.1 2>/dev/null \
+      || apt-get install -y --no-install-recommends \
+           gir1.2-appindicator3-0.1 2>/dev/null \
+      || log_warn "No AppIndicator GI binding; VPN tray may not start"
+  fi
+  summary_set "OpenVPN" "installed"
+  summary_set "Base packages" "installed"
   log_ok "Base packages installed"
 }
 
@@ -280,7 +370,8 @@ install_base_packages() {
 install_desktop_packages() {
   local pkgs=()
   if in_desktops mate; then
-    pkgs+=(plank dconf-cli gsettings-desktop-schemas)
+    # mate-applets ships the Command applet used for the VPN text in the panel.
+    pkgs+=(plank dconf-cli gsettings-desktop-schemas mate-applets)
   fi
   if in_desktops kde; then
     pkgs+=(konsole)
@@ -294,51 +385,84 @@ install_desktop_packages() {
   if [[ "${#pkgs[@]}" -gt 0 ]]; then
     apt_install "${pkgs[@]}" || log_warn "some desktop packages failed to install"
   fi
+  summary_set "Desktop packages" "installed"
 }
 
 install_obsidian() {
   if [[ "${SKIP_OBSIDIAN}" -eq 1 ]]; then
     log_info "Skipping Obsidian (--skip-obsidian)"
+    summary_set "Obsidian" "skipped"
     return 0
   fi
-  if command -v obsidian >/dev/null 2>&1 || dpkg -l obsidian 2>/dev/null | grep -q '^ii'; then
+  if command -v obsidian >/dev/null 2>&1 \
+    || dpkg -l obsidian 2>/dev/null | grep -q '^ii' \
+    || [[ -x "${OBSIDIAN_DIR}/obsidian" ]]; then
     log_ok "Obsidian already installed; skipping"
+    summary_set "Obsidian" "already installed"
     return 0
   fi
 
-  local arch
-  arch="$(dpkg --print-architecture 2>/dev/null || uname -m)"
-  case "${arch}" in
-    amd64|x86_64) arch="amd64" ;;
+  # Obsidian publishes a .deb for amd64 only. The arm64 desktop build ships as a
+  # tarball and an AppImage, so arm64 gets the tarball unpacked by hand instead
+  # of being skipped. There is no 32-bit Linux build at all.
+  case "${ARCH_DEB}" in
+    amd64)
+      if obsidian_from_deb 'https://[^"]+obsidian_[0-9.]+_amd64\.deb'; then
+        summary_set "Obsidian" "installed (amd64 .deb)"
+        return 0
+      fi
+      log_warn "No amd64 .deb resolved; falling back to the x86_64 tarball"
+      obsidian_from_tarball 'https://[^"]+obsidian-[0-9.]+\.tar\.gz'
+      summary_set "Obsidian" "installed (amd64 tarball)"
+      ;;
+    arm64)
+      log_info "arm64 detected: Obsidian has no arm64 .deb, using the arm64 tarball"
+      obsidian_from_tarball 'https://[^"]+obsidian-[0-9.]+-arm64\.tar\.gz'
+      summary_set "Obsidian" "installed (arm64 tarball)"
+      ;;
     *)
-      log_warn "Obsidian auto-install supports amd64 only (got ${arch}); skipping"
-      return 0
+      log_warn "Obsidian has no ${ARCH_DEB} build (amd64 and arm64 only); skipping"
+      summary_set "Obsidian" "skipped (${ARCH_DEB})"
       ;;
   esac
+  return 0
+}
 
-  log_info "Downloading Obsidian .deb from GitHub Releases"
+# The newest release carrying an asset that matches <regex>. Resolved from the
+# release list rather than /releases/latest, because "latest" is frequently a
+# mobile-only build whose single asset is an .apk, and a desktop download would
+# then look unavailable.
+obsidian_asset_url() {
+  local pattern="$1" releases
+  releases="$(curl -fsSL \
+    'https://api.github.com/repos/obsidianmd/obsidian-releases/releases?per_page=15' \
+    2>/dev/null)" || return 1
+  printf '%s' "${releases}" | grep -oE "${pattern}" | head -n1
+}
+
+obsidian_from_deb() {
+  local pattern="$1"
+  log_info "Downloading the Obsidian ${ARCH_DEB} .deb from GitHub Releases"
   if [[ "${DRY_RUN}" -eq 1 ]]; then
     return 0
   fi
 
-  local tmp deb_url deb_file
+  local tmp url deb_file
   tmp="$(mktemp -d)"
-  if ! deb_url="$(curl -fsSL 'https://api.github.com/repos/obsidianmd/obsidian-releases/releases/latest' \
-      | grep -oE 'https://[^"]+obsidian_[0-9.]+_amd64\.deb' | head -n1)"; then
-    log_warn "Could not resolve the Obsidian download URL; skipping"
+  if ! url="$(obsidian_asset_url "${pattern}")" || [[ -z "${url}" ]]; then
     rm -rf "${tmp}"
-    return 0
+    return 1
   fi
 
   deb_file="${tmp}/obsidian.deb"
-  if ! curl -fsSL -o "${deb_file}" "${deb_url}"; then
+  if ! curl -fsSL -o "${deb_file}" "${url}"; then
     log_warn "Obsidian download failed; continuing without it"
     rm -rf "${tmp}"
     return 0
   fi
 
   if apt-get install -y "${deb_file}"; then
-    log_ok "Obsidian installed"
+    log_ok "Obsidian installed (${ARCH_DEB} .deb)"
   else
     dpkg -i "${deb_file}" || true
     apt-get install -f -y || true
@@ -349,6 +473,150 @@ install_obsidian() {
     fi
   fi
   rm -rf "${tmp}"
+}
+
+obsidian_from_tarball() {
+  local pattern="$1"
+  log_info "Downloading the Obsidian tarball for ${ARCH_DEB}"
+  if [[ "${DRY_RUN}" -eq 1 ]]; then
+    return 0
+  fi
+
+  local tmp url tar_file unpacked
+  tmp="$(mktemp -d)"
+  if ! url="$(obsidian_asset_url "${pattern}")" || [[ -z "${url}" ]]; then
+    log_warn "Could not resolve an Obsidian tarball for ${ARCH_DEB}; skipping"
+    rm -rf "${tmp}"
+    return 0
+  fi
+
+  tar_file="${tmp}/obsidian.tar.gz"
+  if ! curl -fsSL -o "${tar_file}" "${url}"; then
+    log_warn "Obsidian download failed; continuing without it"
+    rm -rf "${tmp}"
+    return 0
+  fi
+  if ! tar -xzf "${tar_file}" -C "${tmp}"; then
+    log_warn "Could not unpack the Obsidian tarball; skipping"
+    rm -rf "${tmp}"
+    return 0
+  fi
+
+  unpacked="$(find "${tmp}" -mindepth 1 -maxdepth 1 -type d | head -n1)"
+  if [[ -z "${unpacked}" || ! -x "${unpacked}/obsidian" ]]; then
+    log_warn "The Obsidian tarball did not contain the expected layout; skipping"
+    rm -rf "${tmp}"
+    return 0
+  fi
+
+  rm -rf "${OBSIDIAN_DIR}"
+  mkdir -p "${OBSIDIAN_DIR}"
+  cp -a "${unpacked}/." "${OBSIDIAN_DIR}/"
+  rm -rf "${tmp}"
+
+  # Electron refuses to start when its sandbox helper is not setuid root, and the
+  # tarball cannot ship that permission the way a .deb's postinst sets it.
+  if [[ -f "${OBSIDIAN_DIR}/chrome-sandbox" ]]; then
+    chown root:root "${OBSIDIAN_DIR}/chrome-sandbox"
+    chmod 4755 "${OBSIDIAN_DIR}/chrome-sandbox"
+  fi
+  ln -sf "${OBSIDIAN_DIR}/obsidian" /usr/local/bin/obsidian
+
+  # The tarball has no icon in a standard location, so fall back to the Duckybox
+  # mark, which install_icons puts in hicolor where any theme resolves it.
+  local icon="duckybox" candidate
+  for candidate in \
+    "${OBSIDIAN_DIR}/obsidian.png" \
+    "${OBSIDIAN_DIR}/resources/app.png" \
+    "${OBSIDIAN_DIR}/resources/icon.png"; do
+    if [[ -f "${candidate}" ]]; then
+      install -D -m 644 "${candidate}" \
+        /usr/share/icons/hicolor/512x512/apps/obsidian.png
+      icon="obsidian"
+      break
+    fi
+  done
+
+  cat > /usr/share/applications/obsidian.desktop <<EOF
+[Desktop Entry]
+Type=Application
+Name=Obsidian
+Comment=Markdown knowledge base
+Exec=${OBSIDIAN_DIR}/obsidian %u
+Icon=${icon}
+Categories=Office;TextEditor;
+Terminal=false
+StartupWMClass=obsidian
+MimeType=x-scheme-handler/obsidian;
+EOF
+  log_ok "Obsidian installed at ${OBSIDIAN_DIR} (${ARCH_DEB} tarball)"
+}
+
+# OpenVPN helper plus linpeas / winpeas from PEASS-ng, ready to copy onto targets.
+install_pentest_tools() {
+  log_info "Installing OpenVPN helper, linpeas and winpeas"
+  if [[ "${DRY_RUN}" -eq 1 ]]; then
+    summary_set "linpeas / winpeas" "dry-run"
+    summary_set "openvpn-connect" "dry-run"
+    return 0
+  fi
+
+  mkdir -p "${TOOLS_DIR}" "${OPT_DIR}"
+  install -m 755 "${REPO_ROOT}/scripts/openvpn-connect.sh" "${OPT_DIR}/openvpn-connect.sh"
+  ln -sf "${OPT_DIR}/openvpn-connect.sh" /usr/local/bin/openvpn-connect
+  summary_set "openvpn-connect" "installed (${OPT_DIR}/openvpn-connect.sh)"
+
+  local api assets url name
+  if ! api="$(curl -fsSL "${PEASS_RELEASE_API}" 2>/dev/null)"; then
+    log_warn "Could not reach PEASS-ng releases; linpeas/winpeas skipped"
+    summary_set "linpeas / winpeas" "skipped (download failed)"
+    return 0
+  fi
+
+  assets="$(printf '%s' "${api}" | grep -oE 'https://[^"]+/download/[^"]+')"
+
+  download_tool() {
+    local dest_name="$1" pattern="$2" dest link=""
+    url="$(printf '%s\n' "${assets}" | grep -E "${pattern}" | head -n1 || true)"
+    [[ -n "${url}" ]] || return 1
+    dest="${TOOLS_DIR}/${dest_name}"
+    if curl -fsSL -o "${dest}" "${url}"; then
+      chmod 755 "${dest}" 2>/dev/null || chmod 644 "${dest}"
+      log_ok "Downloaded ${dest_name}"
+      return 0
+    fi
+    rm -f "${dest}"
+    return 1
+  }
+
+  local peass_ok=0
+  if download_tool "linpeas.sh" '/linpeas\.sh$'; then
+    ln -sf "${TOOLS_DIR}/linpeas.sh" /usr/local/bin/linpeas
+    peass_ok=1
+  fi
+  # Prefer the script; fall back to the fat build if the slim name is missing.
+  if [[ "${peass_ok}" -eq 0 ]] && download_tool "linpeas.sh" '/linpeas_fat\.sh$'; then
+    ln -sf "${TOOLS_DIR}/linpeas.sh" /usr/local/bin/linpeas
+    peass_ok=1
+  fi
+
+  download_tool "winPEASx64.exe" '/winPEASx64\.exe$' && peass_ok=1 || true
+  download_tool "winPEASx86.exe" '/winPEASx86\.exe$' && peass_ok=1 || true
+  download_tool "winPEASany.exe" '/winPEASany\.exe$' && peass_ok=1 || true
+  download_tool "winPEAS.bat" '/winPEAS\.bat$' && peass_ok=1 || true
+
+  # Convenience names without the PEAS capitalisation.
+  [[ -f "${TOOLS_DIR}/winPEASx64.exe" ]] && ln -sf winPEASx64.exe "${TOOLS_DIR}/winpeas.exe"
+  [[ -f "${TOOLS_DIR}/linpeas.sh" ]] && ln -sf linpeas.sh "${TOOLS_DIR}/linpeas"
+
+  chown -R root:root "${TOOLS_DIR}" 2>/dev/null || true
+  if [[ "${peass_ok}" -eq 1 ]]; then
+    summary_set "linpeas / winpeas" "installed (${TOOLS_DIR})"
+    log_ok "PEASS tools in ${TOOLS_DIR}"
+  else
+    summary_set "linpeas / winpeas" "skipped (no assets resolved)"
+    log_warn "Could not download linpeas/winpeas assets"
+  fi
 }
 
 # Parrot ships podman-docker, which puts a podman shim at /usr/bin/docker. So
@@ -446,22 +714,39 @@ ensure_docker() {
 install_sysreptor() {
   if [[ "${SKIP_SYSREPTOR}" -eq 1 ]]; then
     log_info "Skipping SysReptor (--skip-sysreptor)"
+    summary_set "SysReptor" "skipped"
     return 0
   fi
 
   if [[ -d "${SYSREPTOR_DIR_DEFAULT}/deploy" ]] || [[ -d "${TARGET_HOME}/sysreptor/deploy" ]]; then
     log_ok "SysReptor already present; skipping download"
     write_sysreptor_helpers
+    summary_set "SysReptor" "already installed"
     return 0
   fi
 
+  # SysReptor's images are published for linux/amd64 and linux/arm64. Docker
+  # picks the right one from the manifest, so arm64 needs nothing special, but
+  # there is no 32-bit image to pull.
+  case "${ARCH_DEB}" in
+    amd64) ;;
+    arm64) log_info "arm64 detected; Docker will pull the arm64 SysReptor images" ;;
+    *)
+      log_warn "SysReptor has no ${ARCH_DEB} images (amd64 and arm64 only); skipping"
+      summary_set "SysReptor" "skipped (${ARCH_DEB})"
+      return 0
+      ;;
+  esac
+
   log_info "Installing SysReptor (pentest reporting platform)"
   if [[ "${DRY_RUN}" -eq 1 ]]; then
+    summary_set "SysReptor" "dry-run"
     return 0
   fi
 
   if ! ensure_docker; then
     log_warn "SysReptor skipped: no usable Docker (see the warnings above)"
+    summary_set "SysReptor" "skipped (no Docker)"
     return 0
   fi
 
@@ -473,6 +758,7 @@ install_sysreptor() {
   if ! curl -fsSL -o "${install_script}" "${SYSREPTOR_INSTALL_URL}"; then
     log_warn "Could not download the SysReptor install script; skipping"
     rm -f "${install_script}"
+    summary_set "SysReptor" "skipped (download failed)"
     return 0
   fi
   chmod 755 "${install_script}"
@@ -481,6 +767,7 @@ install_sysreptor() {
   if ! ( cd "${parent}" && bash "${install_script}" ); then
     log_warn "SysReptor install script failed; continuing without it"
     rm -f "${install_script}"
+    summary_set "SysReptor" "failed"
     return 0
   fi
   rm -f "${install_script}"
@@ -491,6 +778,9 @@ install_sysreptor() {
   if [[ -d "${dest}" ]]; then
     chown -R "${TARGET_USER}:${TARGET_USER}" "${dest}" 2>/dev/null || true
     log_ok "SysReptor installed at ${dest}"
+    summary_set "SysReptor" "installed (${dest})"
+  else
+    summary_set "SysReptor" "failed"
   fi
   write_sysreptor_helpers
 }
@@ -593,6 +883,8 @@ deploy_opt() {
   # because they source scripts/lib/.
   install -m 755 "${REPO_ROOT}/scripts/vpnpanel.sh" "${OPT_DIR}/vpnpanel.sh"
   install -m 755 "${REPO_ROOT}/scripts/vpnbash.sh" "${OPT_DIR}/vpnbash.sh"
+  install -m 755 "${REPO_ROOT}/scripts/vpn-indicator.py" "${OPT_DIR}/vpn-indicator.py"
+  install -m 755 "${REPO_ROOT}/scripts/openvpn-connect.sh" "${OPT_DIR}/openvpn-connect.sh"
   install -m 755 "${REPO_ROOT}/scripts/duckybox-doctor.sh" "${OPT_DIR}/duckybox-doctor.sh"
   cp -f "${REPO_ROOT}/assets/duck.txt" "${OPT_DIR}/duck.txt"
   cp -f "${REPO_ROOT}/assets/duckybox-banner.txt" "${OPT_DIR}/duckybox-banner.txt"
@@ -1221,8 +1513,8 @@ EOF
   log_ok "SDDM will preselect $(basename "${session_file}") for ${TARGET_USER}"
 }
 
-# Peek needs X11, conky needs X11, and KWin only honours the compositing and
-# effects settings on X11. Make the Plasma X11 session the default.
+# Peek needs X11, and KWin only honours the compositing and effects settings
+# on X11. Make the Plasma X11 session the default.
 setup_x11_session() {
   if [[ "${KEEP_WAYLAND}" -eq 1 ]]; then
     log_info "Leaving the default session alone (--keep-wayland)"
@@ -1271,9 +1563,9 @@ setup_x11_session() {
     lightdm)
       mkdir -p /etc/lightdm/lightdm.conf.d
       cat > /etc/lightdm/lightdm.conf.d/99-duckybox.conf <<EOF
-# Duckybox — default to Plasma on X11. Wayland breaks Peek, the conky VPN
-# overlay and KWin's compositing switch. Pick Wayland at the login screen
-# whenever you need it; this only sets the default.
+# Duckybox — default to Plasma on X11. Wayland breaks Peek and KWin's
+# compositing switch. Pick Wayland at the login screen whenever you need it;
+# this only sets the default.
 [Seat:*]
 user-session=${session}
 EOF
@@ -1291,9 +1583,11 @@ EOF
 apply_desktop_as_user() {
   if [[ "${#DESKTOPS[@]:-0}" -eq 0 ]]; then
     log_info "No desktop to theme; skipping"
+    summary_set "Desktop theme" "skipped (no DE)"
     return 0
   fi
   if [[ "${DRY_RUN}" -eq 1 ]]; then
+    summary_set "Desktop theme" "dry-run"
     return 0
   fi
 
@@ -1301,21 +1595,100 @@ apply_desktop_as_user() {
   local scripts_dir="${OPT_DIR}/repo/scripts"
   [[ -d "${scripts_dir}" ]] || scripts_dir="${REPO_ROOT}/scripts"
 
-  local desktop apply
+  local desktop apply failed=0
   for desktop in "${DESKTOPS[@]}"; do
     apply="${scripts_dir}/apply-${desktop}-theme.sh"
     if [[ ! -f "${apply}" ]]; then
       log_warn "Missing ${apply}"
+      failed=1
       continue
     fi
     log_info "Applying the ${desktop} desktop theme as ${TARGET_USER}"
+    if sudo -u "${TARGET_USER}" -H \
+      DUCKYBOX_OPT="${OPT_DIR}" \
+      ${USER_SESSION_ENV[@]+"${USER_SESSION_ENV[@]}"} \
+      bash "${apply}"; then
+      log_ok "${desktop} theme applied"
+    else
+      log_warn "${desktop} theming returned non-zero (a graphical session may be required)"
+      failed=1
+    fi
+  done
+
+  # Also run the deployed entry point so a later manual re-run uses the same path.
+  if [[ -x "${OPT_DIR}/apply-desktop.sh" ]]; then
+    log_info "Re-running ${OPT_DIR}/apply-desktop.sh as ${TARGET_USER}"
     sudo -u "${TARGET_USER}" -H \
       DUCKYBOX_OPT="${OPT_DIR}" \
       ${USER_SESSION_ENV[@]+"${USER_SESSION_ENV[@]}"} \
-      bash "${apply}" \
-      || log_warn "${desktop} theming returned non-zero (a graphical session may be required)"
-  done
+      bash "${OPT_DIR}/apply-desktop.sh" \
+      || log_warn "apply-desktop.sh returned non-zero"
+  fi
+
+  if [[ "${failed}" -eq 0 ]]; then
+    summary_set "Desktop theme" "applied (${DESKTOPS[*]})"
+  else
+    summary_set "Desktop theme" "partial (re-run ${OPT_DIR}/apply-desktop.sh after login)"
+  fi
+  summary_set "Virtual desktops" "1 (was 4)"
+  summary_set "VPN indicator" "top panel"
   log_ok "Desktop theming finished"
+}
+
+print_install_summary() {
+  local themed="${DESKTOPS[*]:-none}"
+  summary_set "Architecture" "${ARCH_FAMILY} ${ARCH_BITS}-bit (${ARCH_DEB})"
+  summary_set "Desktops themed" "${themed}"
+  summary_set "Keyboard" "${KEYBOARD_LAYOUT} + inverted scroll"
+  summary_set "Boot splash" "${PLYMOUTH_STYLE}"
+
+  local row component status
+  local max_c=11 max_s=6
+  for row in "${SUMMARY_ROWS[@]}"; do
+    component="${row%%|*}"
+    status="${row#*|}"
+    (( ${#component} > max_c )) && max_c=${#component}
+    (( ${#status} > max_s )) && max_s=${#status}
+  done
+
+  local rule_c rule_s
+  rule_c="$(printf '%*s' "$((max_c + 2))" '' | tr ' ' '-')"
+  rule_s="$(printf '%*s' "$((max_s + 2))" '' | tr ' ' '-')"
+
+  printf '\n'
+  printf '+%s+%s+\n' "${rule_c}" "${rule_s}"
+  printf "| %-*s | %-*s |\n" "${max_c}" "Component" "${max_s}" "Status"
+  printf '+%s+%s+\n' "${rule_c}" "${rule_s}"
+  for row in "${SUMMARY_ROWS[@]}"; do
+    component="${row%%|*}"
+    status="${row#*|}"
+    printf "| %-*s | %-*s |\n" "${max_c}" "${component}" "${max_s}" "${status}"
+  done
+  printf '+%s+%s+\n' "${rule_c}" "${rule_s}"
+
+  cat <<EOF
+
+╔══════════════════════════════════════════════════════════════════╗
+║  Reinicia la computadora para terminar el proceso.               ║
+║                                                                  ║
+║  Después del reinicio verás GRUB, el splash y el login themed.   ║
+║  El tema se re-aplica solo una vez al iniciar sesión.             ║
+╚══════════════════════════════════════════════════════════════════╝
+
+Tools:
+  openvpn-connect <profile.ovpn>
+  linpeas                  (${TOOLS_DIR}/linpeas.sh)
+  winpeas / winPEAS*.exe   (${TOOLS_DIR}/)
+
+Re-apply the desktop theme at any time:
+  ${OPT_DIR}/apply-desktop.sh
+
+Verify everything at once:
+  bash ${OPT_DIR}/duckybox-doctor.sh
+
+Notes: ${TARGET_HOME}/.config/duckybox/
+Log:   ${LOG_FILE}
+EOF
 }
 
 # Environment needed to talk to the user's running graphical session. sudo wipes
@@ -1424,6 +1797,7 @@ main() {
   require_root
   init_log
   require_parrot
+  detect_arch
   detect_user
   detect_desktops
   detect_display_manager
@@ -1431,6 +1805,7 @@ main() {
 
   install_base_packages
   install_desktop_packages
+  install_pentest_tools
   install_obsidian
   install_sysreptor
   regen_brand_assets
@@ -1450,36 +1825,7 @@ main() {
   install_first_login_hook
 
   log_ok "=== Duckybox install complete ==="
-  local themed="${DESKTOPS[*]:-none}"
-  cat <<EOF
-
-Duckybox is installed. Desktops themed: ${themed}
-
-Next steps:
-  1. Reboot. You should see the violet GRUB menu, the Duckybox splash, then a
-     themed login screen.
-  2. At the login screen confirm the session is Plasma on X11 (now the
-     default). Wayland breaks Peek, the conky VPN overlay and KWin's
-     compositing switch.
-  3. Log in and wait about ten seconds. The theme re-applies itself once from
-     inside the session, because Plasma rewrites its config as a session ends
-     and would otherwise undo what the installer just wrote. Plasma restarts
-     its panel when that happens; that flash is expected.
-  4. Connect OpenVPN (tun0) to see the address appear top-right and in the
-     shell prompt.
-  5. Apps: Flameshot, Peek, Obsidian, SysReptor (http://127.0.0.1:8000/).
-  6. Keyboard is ${KEYBOARD_LAYOUT} and scrolling is inverted, on the desktop
-     and at the login screen.
-
-Re-apply the desktop theme at any time:
-  ${OPT_DIR}/apply-desktop.sh
-
-Verify everything at once:
-  bash ${OPT_DIR}/duckybox-doctor.sh
-
-Notes for your desktop: ${TARGET_HOME}/.config/duckybox/
-Log file: ${LOG_FILE}
-EOF
+  print_install_summary
 }
 
 main "$@"

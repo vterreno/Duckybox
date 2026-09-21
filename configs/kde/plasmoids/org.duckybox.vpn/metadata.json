@@ -1,0 +1,20 @@
+{
+    "KPlugin": {
+        "Authors": [
+            {
+                "Name": "Duckybox"
+            }
+        ],
+        "Category": "System Information",
+        "Description": "Shows the OpenVPN tun0 address in the panel",
+        "Icon": "network-vpn",
+        "Id": "org.duckybox.vpn",
+        "License": "GPL-3.0+",
+        "Name": "Duckybox VPN",
+        "Version": "1.0",
+        "Website": "https://github.com/vterreno/Turfbox"
+    },
+    "X-Plasma-API": "declarativeappletscript",
+    "X-Plasma-MainScript": "ui/main.qml",
+    "KPackageStructure": "Plasma/Applet"
+}

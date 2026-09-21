@@ -20,6 +20,10 @@ section "System"
 . /etc/os-release 2>/dev/null
 printf '  OS:      %s\n' "${PRETTY_NAME:-unknown}"
 printf '  Kernel:  %s\n' "$(uname -r)"
+# dpkg's architecture is the one apt and every .deb follow; uname can differ when
+# a 64-bit kernel runs a 32-bit userland.
+printf '  Arch:    %s (uname %s)\n' \
+  "$(dpkg --print-architecture 2>/dev/null || echo unknown)" "$(uname -m)"
 printf '  Session: %s / %s\n' "${XDG_CURRENT_DESKTOP:-?}" "${XDG_SESSION_TYPE:-?}"
 printf '  DM:      %s\n' "$(basename "$(readlink -f /etc/systemd/system/display-manager.service 2>/dev/null)" 2>/dev/null || echo unknown)"
 if command -v xrandr >/dev/null 2>&1; then
@@ -36,7 +40,7 @@ else
   printf '  Default session: not pinned by Duckybox\n'
 fi
 if [[ "${XDG_SESSION_TYPE:-}" == "wayland" ]]; then
-  printf '  NOTE: running Wayland. Peek and the conky VPN overlay need X11.\n'
+  printf '  NOTE: running Wayland. Peek needs X11; the VPN tray still works.\n'
 fi
 
 section "Duckybox files"
@@ -96,14 +100,26 @@ if command -v plasmashell >/dev/null 2>&1; then
 fi
 
 section "VPN overlay"
-check "conky installed" command -v conky
-check "conky config" test -f "${HOME}/.config/conky/duckybox-vpn.conkyrc"
-check "autostart entry" test -f "${HOME}/.config/autostart/duckybox-vpn.desktop"
-if pgrep -f 'conky.*duckybox-vpn' >/dev/null 2>&1; then
-  printf '  [ ok ] overlay process running\n'
+check "vpnpanel.sh" test -x "${OPT_DIR}/vpnpanel.sh"
+check "vpn-indicator.py" test -x "${OPT_DIR}/vpn-indicator.py"
+check "tray autostart" test -f "${HOME}/.config/autostart/duckybox-vpn-indicator.desktop"
+if pgrep -f 'vpn-indicator.py' >/dev/null 2>&1; then
+  printf '  [ ok ] tray indicator running\n'
 else
-  printf '  [FAIL] overlay not running\n'
+  printf '  [ -- ] tray indicator not running (starts at login)\n'
 fi
+# Legacy conky overlay should be gone.
+if [[ -f "${HOME}/.config/autostart/duckybox-vpn.desktop" ]]; then
+  printf '  [WARN] old conky VPN autostart still present\n'
+fi
+printf '  status: %s\n' "$("${OPT_DIR}/vpnpanel.sh" 2>/dev/null || echo 'vpnpanel.sh not runnable')"
+
+section "Pentest tools"
+check "openvpn" command -v openvpn
+check "openvpn-connect" test -x "${OPT_DIR}/openvpn-connect.sh"
+check "linpeas" test -f /opt/duckybox/tools/linpeas.sh
+check "winPEASx64" test -f /opt/duckybox/tools/winPEASx64.exe
+ls -1 /opt/duckybox/tools/ 2>/dev/null | sed 's/^/  /' || echo '  (none)'
 
 section "Keyboard and mouse"
 if [[ -r /etc/default/keyboard ]]; then
@@ -258,6 +274,8 @@ for app in flameshot peek obsidian tmux docker plank; do
     printf '  [ -- ] %s not found\n' "${app}"
   fi
 done
+# On arm64 Obsidian comes from a tarball, so it lives here instead of dpkg.
+[[ -x /opt/obsidian/obsidian ]] && printf '  [ ok ] obsidian (tarball in /opt/obsidian)\n'
 check "SysReptor deploy dir" test -d /opt/sysreptor/deploy
 
 section "VPN"

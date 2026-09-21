@@ -493,15 +493,15 @@ Applied automatically:
   - Keyboard layout and inverted scroll direction
   - Wallpaper from /usr/share/backgrounds/duckybox
   - Compositing, animations and Baloo indexing disabled
-  - VPN indicator via conky, top-right
+  - VPN indicator in the top panel (tray + optional plasmoid)
+  - A single virtual desktop (Parrot's default four are removed)
 
 If the panel still looks stock, log out and back in: Plasma caches its
 configuration in memory and rewrites it on exit, which can undo edits made
 while the session is running.
 
-VPN overlay config: ~/.config/conky/duckybox-vpn.conkyrc
-  Panel at the bottom instead of the top? Set gap_y = 8.
-  Do not want it over windows? Change 'above' to 'below' in own_window_hints.
+VPN tray: ${OPT_DIR}/vpn-indicator.py
+OpenVPN:  ${OPT_DIR}/openvpn-connect.sh /path/to/profile.ovpn
 EOF
   log "Notes written to ${notes}"
 }
@@ -528,7 +528,10 @@ main() {
   apply_konsole
   apply_input
   bind_flameshot
-  duckybox_setup_vpn_overlay kde "${REPO_ROOT}" "${HOME_DIR}"
+  duckybox_disable_conky_vpn "${HOME_DIR}"
+  duckybox_setup_vpn_tray kde "${HOME_DIR}"
+  duckybox_setup_kde_vpn_plasmoid kde "${REPO_ROOT}" "${HOME_DIR}"
+  duckybox_set_single_workspace_kde kde
   write_notes
   reload_session
   # Last, deliberately: it stops and starts plasmashell, and everything above

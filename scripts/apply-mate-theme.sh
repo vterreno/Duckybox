@@ -153,27 +153,28 @@ EOF
   fi
 }
 
-setup_vpn_panel_hint() {
+setup_vpn_panel() {
+  duckybox_disable_conky_vpn "${HOME_DIR}"
+  duckybox_setup_mate_vpn_applet mate
+  duckybox_setup_vpn_tray mate "${HOME_DIR}"
+
   local hint="${HOME_DIR}/.config/duckybox/VPN_PANEL.txt"
   mkdir -p "$(dirname "${hint}")"
   cat > "${hint}" <<EOF
 Duckybox VPN indicator
 ======================
-The conky overlay in the top-right corner is set up automatically and needs
-no configuration. Its config lives at:
-  ~/.config/conky/duckybox-vpn.conkyrc
+The tun0 address is shown in the top panel:
+  - Command applet running ${OPT_DIR}/vpnpanel.sh
+  - System-tray indicator (${OPT_DIR}/vpn-indicator.py)
 
-If you would rather have it inside the MATE panel instead:
-
-1. Right-click the top panel -> Add to Panel
-2. Add "Command"
-3. Right-click the new applet -> Preferences
-4. Command: ${OPT_DIR}/vpnpanel.sh
-5. Interval: 5 seconds
-
-Either way it shows the tun0 address, or that the VPN is down.
+OpenVPN connect helper:
+  ${OPT_DIR}/openvpn-connect.sh /path/to/profile.ovpn
 EOF
-  log "Wrote VPN indicator notes to ${hint}"
+  log "VPN indicator is in the top panel"
+}
+
+reduce_workspaces() {
+  duckybox_set_single_workspace_mate mate
 }
 
 apply_input() {
@@ -223,8 +224,8 @@ main() {
   apply_menu_logo
   apply_terminal
   setup_plank
-  duckybox_setup_vpn_overlay mate "${REPO_ROOT}" "${HOME_DIR}"
-  setup_vpn_panel_hint
+  setup_vpn_panel
+  reduce_workspaces
   apply_input
   bind_flameshot
   log "Duckybox desktop applied"

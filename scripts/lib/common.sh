@@ -111,36 +111,157 @@ duckybox_pick_wallpaper() {
   duckybox_first_wallpaper "${choice}" "duckybox-1920x1080" || true
 }
 
-# Start the conky VPN overlay and make it persist across logins.
-duckybox_setup_vpn_overlay() {
-  local tag="$1" repo_root="$2" home_dir="${3:-${HOME}}"
-  local conkyrc="${home_dir}/.config/conky/duckybox-vpn.conkyrc"
+# Kill the old conky corner overlay if a previous install left it behind.
+duckybox_disable_conky_vpn() {
+  local home_dir="${1:-${HOME}}"
+  pkill -f 'conky.*duckybox-vpn' 2>/dev/null || true
+  rm -f "${home_dir}/.config/autostart/duckybox-vpn.desktop" \
+        "${home_dir}/.config/conky/duckybox-vpn.conkyrc" 2>/dev/null || true
+}
 
-  if ! command -v conky >/dev/null 2>&1; then
-    duckybox_log "${tag}" "conky not installed; skipping the VPN overlay"
-    return 0
-  fi
+# Autostart the tray indicator that shows tun0 in the top-panel system tray.
+duckybox_setup_vpn_tray() {
+  local tag="$1" home_dir="${2:-${HOME}}"
+  local indicator="/opt/duckybox/vpn-indicator.py"
 
-  mkdir -p "$(dirname "${conkyrc}")" "${home_dir}/.config/autostart"
-  cp -f "${repo_root}/configs/conky/duckybox-vpn.conkyrc" "${conkyrc}"
-
-  cat > "${home_dir}/.config/autostart/duckybox-vpn.desktop" <<EOF
+  mkdir -p "${home_dir}/.config/autostart"
+  cat > "${home_dir}/.config/autostart/duckybox-vpn-indicator.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Name=Duckybox VPN indicator
-Comment=Shows the tun0 address in the top-right corner
-Exec=conky -q -c ${conkyrc}
-Icon=duckybox
+Comment=Shows the tun0 address in the top panel
+Exec=${indicator}
+Icon=network-vpn
 Terminal=false
 X-GNOME-Autostart-enabled=true
 EOF
 
-  if [[ "${XDG_SESSION_TYPE:-}" == "wayland" ]]; then
-    duckybox_log "${tag}" "Wayland session: conky needs X11, overlay will start after switching"
+  if [[ ! -x "${indicator}" ]]; then
+    duckybox_log "${tag}" "VPN indicator script missing at ${indicator}"
     return 0
   fi
 
-  pkill -f 'conky.*duckybox-vpn' 2>/dev/null || true
-  nohup conky -q -c "${conkyrc}" >/dev/null 2>&1 &
-  duckybox_log "${tag}" "VPN overlay running (top-right)"
+  pkill -f 'vpn-indicator.py' 2>/dev/null || true
+  if [[ "${XDG_SESSION_TYPE:-}" == "wayland" ]] || [[ -n "${DISPLAY:-}" ]]; then
+    nohup "${indicator}" >/dev/null 2>&1 &
+    duckybox_log "${tag}" "VPN tray indicator started"
+  else
+    duckybox_log "${tag}" "No display yet; VPN tray indicator will start at login"
+  fi
+}
+
+# MATE: put vpnpanel.sh in the top panel as a Command applet (inline text).
+duckybox_setup_mate_vpn_applet() {
+  local tag="$1"
+  command -v dconf >/dev/null 2>&1 || {
+    duckybox_log "${tag}" "dconf missing; cannot add the VPN panel applet"
+    return 0
+  }
+
+  local obj="duckybox-vpn"
+  local list
+  list="$(dconf read /org/mate/panel/general/object-id-list 2>/dev/null || true)"
+
+  # Create or refresh the applet object.
+  dconf write "/org/mate/panel/objects/${obj}/object-type" "'applet'" 2>/dev/null || true
+  dconf write "/org/mate/panel/objects/${obj}/applet-iid" \
+    "'CommandAppletFactory::CommandApplet'" 2>/dev/null || true
+  dconf write "/org/mate/panel/objects/${obj}/toplevel-id" "'top'" 2>/dev/null || true
+  dconf write "/org/mate/panel/objects/${obj}/position" "10" 2>/dev/null || true
+  dconf write "/org/mate/panel/objects/${obj}/panel-right-stick" "true" 2>/dev/null || true
+  dconf write "/org/mate/panel/objects/${obj}/locked" "true" 2>/dev/null || true
+  dconf write "/org/mate/panel/objects/${obj}/prefs/command" \
+    "'/opt/duckybox/vpnpanel.sh'" 2>/dev/null || true
+  # Interval is seconds; older mate-applets used a different key name.
+  dconf write "/org/mate/panel/objects/${obj}/prefs/interval" "5" 2>/dev/null || true
+
+  if [[ "${list}" != *"'${obj}'"* ]]; then
+    if [[ -z "${list}" || "${list}" == "@as []" || "${list}" == "[]" ]]; then
+      dconf write /org/mate/panel/general/object-id-list "['${obj}']" 2>/dev/null || true
+    else
+      # Append without destroying the existing layout.
+      local trimmed="${list%]*}"
+      dconf write /org/mate/panel/general/object-id-list \
+        "${trimmed}, '${obj}']" 2>/dev/null || true
+    fi
+  fi
+  duckybox_log "${tag}" "VPN Command applet added to the top panel"
+}
+
+# KDE: install the plasmoid and pin it to the first panel when Plasma is live.
+duckybox_setup_kde_vpn_plasmoid() {
+  local tag="$1" repo_root="$2" home_dir="${3:-${HOME}}"
+  local src="${repo_root}/configs/kde/plasmoids/org.duckybox.vpn"
+  local dest="${home_dir}/.local/share/plasma/plasmoids/org.duckybox.vpn"
+
+  if [[ ! -d "${src}" ]]; then
+    duckybox_log "${tag}" "VPN plasmoid sources missing; tray indicator still covers it"
+    return 0
+  fi
+
+  mkdir -p "$(dirname "${dest}")"
+  rm -rf "${dest}"
+  cp -a "${src}" "${dest}"
+  duckybox_log "${tag}" "VPN plasmoid installed at ${dest}"
+
+  local qdbus=""
+  qdbus="$(command -v qdbus6 || command -v qdbus || command -v qdbus-qt6 || true)"
+  if [[ -z "${qdbus}" ]] || ! pgrep -x plasmashell >/dev/null 2>&1; then
+    duckybox_log "${tag}" "Plasma not running; add 'Duckybox VPN' to the panel after login"
+    return 0
+  fi
+
+  local script result
+  script='
+var found = 0;
+for (var i = 0; i < panelIds.length; i++) {
+    var panel = panelById(panelIds[i]);
+    for (var j = 0; j < panel.widgetIds.length; j++) {
+        var w = panel.widgetById(panel.widgetIds[j]);
+        if (w.type === "org.duckybox.vpn") { found++; }
+    }
+}
+if (found === 0 && panelIds.length > 0) {
+    var p = panelById(panelIds[0]);
+    p.addWidget("org.duckybox.vpn");
+    print("added");
+} else {
+    print("present:" + found);
+}
+'
+  result="$("${qdbus}" org.kde.plasmashell /PlasmaShell \
+    org.kde.PlasmaShell.evaluateScript "${script}" 2>/dev/null || true)"
+  duckybox_log "${tag}" "VPN plasmoid: ${result:-no response}"
+}
+
+# Single workspace instead of Parrot's default four virtual desktops.
+duckybox_set_single_workspace_mate() {
+  local tag="$1"
+  if command -v gsettings >/dev/null 2>&1; then
+    gsettings set org.mate.Marco.general num-workspaces 1 2>/dev/null || true
+    gsettings set org.mate.Marco.general workspace-names "['Desktop']" 2>/dev/null || true
+    duckybox_log "${tag}" "Virtual desktops reduced to 1"
+  fi
+}
+
+duckybox_set_single_workspace_kde() {
+  local tag="$1"
+  local kwrite=""
+  kwrite="$(command -v kwriteconfig6 || command -v kwriteconfig5 || command -v kwriteconfig || true)"
+  if [[ -n "${kwrite}" ]]; then
+    "${kwrite}" --file kwinrc --group Desktops --key Number 1 2>/dev/null || true
+    "${kwrite}" --file kwinrc --group Desktops --key Rows 1 2>/dev/null || true
+    "${kwrite}" --file kwinrc --group Desktops --key Name_1 Desktop 2>/dev/null || true
+  fi
+
+  # Live session: shrink the pager immediately when KWin is on the bus.
+  local qdbus=""
+  qdbus="$(command -v qdbus6 || command -v qdbus || command -v qdbus-qt6 || true)"
+  if [[ -n "${qdbus}" ]]; then
+    "${qdbus}" org.kde.KWin /VirtualDesktopManager \
+      org.kde.KWin.VirtualDesktopManager.setCount 1 >/dev/null 2>&1 \
+      || "${qdbus}" org.kde.KWin /KWin setCurrentDesktop 1 >/dev/null 2>&1 \
+      || true
+  fi
+  duckybox_log "${tag}" "Virtual desktops reduced to 1"
 }
