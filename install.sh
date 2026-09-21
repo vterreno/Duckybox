@@ -368,12 +368,13 @@ install_base_packages() {
 # Plank and the MATE settings tools are only useful on MATE, and Peek only
 # works on X11, so install them where they actually apply.
 install_desktop_packages() {
-  local pkgs=()
+  local pkgs=(kitty)
   if in_desktops mate; then
     # mate-applets ships the Command applet used for the VPN text in the panel.
     pkgs+=(plank dconf-cli gsettings-desktop-schemas mate-applets)
   fi
   if in_desktops kde; then
+    # Konsole stays as a themed fallback; kitty is the default.
     pkgs+=(konsole)
   fi
   if [[ "${KEEP_WAYLAND}" -eq 0 ]]; then
@@ -384,6 +385,20 @@ install_desktop_packages() {
 
   if [[ "${#pkgs[@]}" -gt 0 ]]; then
     apt_install "${pkgs[@]}" || log_warn "some desktop packages failed to install"
+  fi
+
+  if [[ "${DRY_RUN}" -eq 0 ]] && command -v kitty >/dev/null 2>&1; then
+    # System-wide default for anything that calls x-terminal-emulator.
+    if command -v update-alternatives >/dev/null 2>&1; then
+      update-alternatives --install /usr/bin/x-terminal-emulator \
+        x-terminal-emulator "$(command -v kitty)" 50 >/dev/null 2>&1 || true
+      update-alternatives --set x-terminal-emulator "$(command -v kitty)" \
+        >/dev/null 2>&1 || true
+    fi
+    summary_set "Terminal" "kitty (default, opacity 0.82)"
+    log_ok "Kitty set as the default terminal"
+  else
+    summary_set "Terminal" "kitty (pending)"
   fi
   summary_set "Desktop packages" "installed"
 }
@@ -888,7 +903,9 @@ deploy_opt() {
   install -m 755 "${REPO_ROOT}/scripts/duckybox-doctor.sh" "${OPT_DIR}/duckybox-doctor.sh"
   cp -f "${REPO_ROOT}/assets/duck.txt" "${OPT_DIR}/duck.txt"
   cp -f "${REPO_ROOT}/assets/duckybox-banner.txt" "${OPT_DIR}/duckybox-banner.txt"
-  cp -f "${REPO_ROOT}/configs/terminal/sequences" "${OPT_DIR}/sequences"
+  # Also deploy the kitty theme into /opt so re-runs and docs can find it.
+  mkdir -p "${OPT_DIR}/kitty"
+  cp -f "${REPO_ROOT}/configs/terminal/kitty.conf" "${OPT_DIR}/kitty/kitty.conf"
   cp -f "${REPO_ROOT}/configs/bash/duckybox.bashrc" "${OPT_DIR}/duckybox.bashrc"
 
   # apply-mate-theme.sh reads configs relative to a repo layout.

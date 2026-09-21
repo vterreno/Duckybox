@@ -37,8 +37,9 @@ apply_theme_and_perf() {
     return 0
   fi
 
-  # Performance: no compositing, no animations, no desktop icon drawing.
-  gsettings set org.mate.Marco.general compositing-manager false 2>/dev/null || true
+  # Performance: compositing stays on so kitty opacity works; animations and
+  # desktop-icon drawing stay off. reduced-resources still helps Marco.
+  gsettings set org.mate.Marco.general compositing-manager true 2>/dev/null || true
   gsettings set org.mate.Marco.general reduced-resources true 2>/dev/null || true
   gsettings set org.mate.interface enable-animations false 2>/dev/null || true
   gsettings set org.mate.background show-desktop-icons false 2>/dev/null || true
@@ -73,10 +74,19 @@ apply_menu_logo() {
 }
 
 apply_terminal() {
-  log "Applying mate-terminal colors"
+  # Keep mate-terminal themed as a fallback, then switch the default to kitty.
+  log "Applying mate-terminal colors (fallback)"
   if command -v dconf >/dev/null 2>&1 && [[ -f "${REPO_ROOT}/configs/terminal/mate-terminal.dconf" ]]; then
     dconf load /org/mate/terminal/profiles/default/ \
       < "${REPO_ROOT}/configs/terminal/mate-terminal.dconf" || true
+  fi
+  duckybox_setup_kitty mate "${REPO_ROOT}" "${HOME_DIR}"
+
+  # Kitty transparency needs a compositor. Keep animations off for speed.
+  if command -v gsettings >/dev/null 2>&1; then
+    gsettings set org.mate.Marco.general compositing-manager true 2>/dev/null || true
+    gsettings set org.mate.interface enable-animations false 2>/dev/null || true
+    log "Marco compositing on (needed for kitty opacity); animations still off"
   fi
 }
 
@@ -106,7 +116,7 @@ setup_plank() {
   local i=0 desk pair
   local -a cands
   for pair in \
-    "mate-terminal.desktop|org.mate.Terminal.desktop|xfce4-terminal.desktop" \
+    "kitty.desktop" \
     "firefox.desktop|firefox-esr.desktop" \
     "flameshot.desktop|org.flameshot.Flameshot.desktop" \
     "peek.desktop|com.uploadedlobster.peek.desktop" \

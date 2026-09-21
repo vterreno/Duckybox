@@ -91,7 +91,9 @@ install_color_scheme() {
 apply_icons_and_style() {
   log "Setting icons and widget style"
   kwrite kdeglobals Icons Theme Papirus-Dark
-  kwrite kdeglobals General TerminalApplication konsole
+  kwrite kdeglobals General TerminalApplication kitty
+  # Also the key some Plasma versions and xdg-terminal-exec read.
+  kwrite kdeglobals General TerminalService kitty.desktop
 
   if command -v plasma-apply-desktoptheme >/dev/null 2>&1; then
     plasma-apply-desktoptheme breeze-dark >/dev/null 2>&1 || true
@@ -357,14 +359,14 @@ apply_window_decorations() {
 }
 
 tune_performance() {
-  log "Disabling compositing, animations and file indexing"
+  log "Keeping compositing for kitty opacity; disabling animations and indexing"
 
-  # Compositing off is the single biggest win in a VM. X11 only; on Wayland
-  # the compositor is the session, so KWin ignores this.
+  # Kitty's background_opacity needs a compositor. Leave compositing on, kill
+  # the expensive effects and animations instead.
   if [[ "${XDG_SESSION_TYPE:-}" != "wayland" ]]; then
-    kwrite kwinrc Compositing Enabled false
+    kwrite kwinrc Compositing Enabled true
   else
-    log "Wayland session: leaving compositing alone"
+    log "Wayland session: compositor is inherent"
   fi
   kwrite kwinrc Compositing OpenGLIsUnsafe false
   kwrite kwinrc Compositing AnimationSpeed 0
@@ -422,13 +424,17 @@ apply_wallpaper() {
 }
 
 apply_konsole() {
-  log "Installing the Duckybox Konsole profile"
+  log "Installing the Duckybox Konsole profile (fallback)"
   local dest="${HOME_DIR}/.local/share/konsole"
   mkdir -p "${dest}"
   cp -f "${REPO_ROOT}/configs/kde/konsole/Duckybox.colorscheme" "${dest}/Duckybox.colorscheme"
   cp -f "${REPO_ROOT}/configs/kde/konsole/Duckybox.profile" "${dest}/Duckybox.profile"
   kwrite konsolerc "Desktop Entry" DefaultProfile Duckybox.profile
   kwrite konsolerc General ConfigVersion 1
+}
+
+apply_kitty() {
+  duckybox_setup_kitty kde "${REPO_ROOT}" "${HOME_DIR}"
 }
 
 apply_input() {
@@ -489,10 +495,11 @@ Applied automatically:
   - Colour scheme "Duckybox" (violet accent #7C3AED, violet titlebars)
   - Icons: Papirus-Dark with violet folders
   - Application launcher icon set to the Duckybox duck
-  - Konsole profile "Duckybox"
+  - Konsole profile "Duckybox" (fallback)
+  - Kitty as the default terminal (violet palette, 82% opacity)
   - Keyboard layout and inverted scroll direction
   - Wallpaper from /usr/share/backgrounds/duckybox
-  - Compositing, animations and Baloo indexing disabled
+  - Animations and Baloo indexing disabled (compositing kept for kitty opacity)
   - VPN indicator in the top panel (tray + optional plasmoid)
   - A single virtual desktop (Parrot's default four are removed)
 
@@ -526,6 +533,7 @@ main() {
   tune_performance
   apply_wallpaper
   apply_konsole
+  apply_kitty
   apply_input
   bind_flameshot
   duckybox_disable_conky_vpn "${HOME_DIR}"

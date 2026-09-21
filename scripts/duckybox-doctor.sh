@@ -266,8 +266,33 @@ done
 section "Wallpapers"
 ls -1 /usr/share/backgrounds/duckybox/ 2>/dev/null | sed 's/^/  /' || echo '  (none)'
 
+section "Terminal"
+check "kitty installed" command -v kitty
+check "kitty config" test -f "${HOME}/.config/kitty/kitty.conf"
+if command -v kitty >/dev/null 2>&1; then
+  printf '  kitty: %s\n' "$(command -v kitty)"
+fi
+if [[ -f "${HOME}/.config/kitty/kitty.conf" ]]; then
+  printf '  opacity: %s\n' \
+    "$(sed -n 's/^background_opacity[[:space:]]*//p' "${HOME}/.config/kitty/kitty.conf" | head -n1)"
+fi
+if command -v update-alternatives >/dev/null 2>&1; then
+  printf '  x-terminal-emulator: %s\n' \
+    "$(readlink -f /etc/alternatives/x-terminal-emulator 2>/dev/null || echo unset)"
+fi
+if command -v gsettings >/dev/null 2>&1 \
+  && gsettings list-schemas 2>/dev/null | grep -q '^org.mate.applications-terminal$'; then
+  printf '  MATE terminal: %s\n' \
+    "$(gsettings get org.mate.applications-terminal exec 2>/dev/null)"
+fi
+if command -v kreadconfig6 >/dev/null 2>&1 || command -v kreadconfig5 >/dev/null 2>&1; then
+  _kt="$(command -v kreadconfig6 || command -v kreadconfig5)"
+  printf '  Plasma TerminalApplication: %s\n' \
+    "$("${_kt}" --file kdeglobals --group General --key TerminalApplication 2>/dev/null)"
+fi
+
 section "Apps"
-for app in flameshot peek obsidian tmux docker plank; do
+for app in kitty flameshot peek obsidian tmux docker plank openvpn; do
   if command -v "${app}" >/dev/null 2>&1; then
     printf '  [ ok ] %s\n' "${app}"
   else

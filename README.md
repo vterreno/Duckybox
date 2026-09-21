@@ -14,7 +14,7 @@ Brand violet `#4B0E8F` · accent `#7C3AED` · backdrop `#12071F`
 | MATE | `Duckybox` GTK theme (GTK2/3/4 plus `metacity-1` for Marco), violet Papirus icons, Plank dock, duck wallpaper picked by resolution |
 | KDE Plasma | `Duckybox` colour scheme with violet titlebars, Papirus-Dark violet icons, Konsole profile, same wallpaper |
 | VPN | `tun0` address in the top panel (Command applet on MATE, tray + plasmoid on KDE) |
-| Terminal | mate-terminal and Konsole palettes, plus OSC sequences for any terminal |
+| Terminal | **Kitty** as default (violet palette, 82% opacity); mate-terminal and Konsole kept as themed fallbacks |
 | tmux | Violet status bar, window and pane styling |
 | bash | Duck banner, violet prompt with the VPN IP inline |
 
@@ -24,9 +24,9 @@ Both desktops are supported and detected automatically. `--session auto` themes 
 
 The desktop stays, the expensive parts go.
 
-On MATE: Marco compositing off, `reduced-resources` on, animations disabled, desktop icon drawing off, bottom panel replaced by Plank.
+On MATE: Marco compositing stays **on** so Kitty's opacity works, `reduced-resources` on, animations disabled, desktop icon drawing off, bottom panel replaced by Plank.
 
-On KDE: KWin compositing off (X11 only), animation duration factor zero, blur and slide effects disabled, and Baloo file indexing disabled, which is the biggest single win on a pentest box.
+On KDE: KWin compositing stays **on** for the same reason, animation duration factor zero, blur and slide effects disabled, and Baloo file indexing disabled, which is the biggest single win on a pentest box.
 
 `mate-*` and `plasma-*` packages are never purged, since removing them breaks networking and VPN on Parrot.
 
@@ -64,7 +64,7 @@ The installer now leaves a one-shot autostart entry that re-applies the theme ab
 
 ## Tools installed
 
-**Flameshot**, **Peek**, **OpenVPN** (`openvpn-connect`), **linpeas** / **winpeas** (PEASS-ng into `/opt/duckybox/tools`), **Obsidian** (from GitHub Releases, per architecture) and **SysReptor** (Docker, at `/opt/sysreptor`, UI on `http://127.0.0.1:8000/`).
+**Kitty** (default terminal, violet theme, semi-transparent), **Flameshot**, **Peek**, **OpenVPN** (`openvpn-connect`), **linpeas** / **winpeas** (PEASS-ng into `/opt/duckybox/tools`), **Obsidian** (from GitHub Releases, per architecture) and **SysReptor** (Docker, at `/opt/sysreptor`, UI on `http://127.0.0.1:8000/`).
 
 Parrot ships four virtual desktops by default; the installer reduces that to **one** on both MATE and KDE.
 
@@ -172,6 +172,7 @@ assets/brand/duckybox-logo.png     # the one source of truth for branding
 assets/duck.txt                    # braille duck, generated
 assets/{plymouth,wallpapers,grub,greeter,icons}/
 configs/{tmux,gtk,terminal,bash,plank,plymouth,grub,lightdm}/
+configs/terminal/kitty.conf        # default terminal theme (82% opacity)
 configs/kde/                       # colour scheme, Konsole profile
 configs/conky/                     # legacy (no longer used; VPN is in the panel)
 configs/kde/plasmoids/             # Duckybox VPN panel plasmoid

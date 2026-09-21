@@ -265,3 +265,36 @@ duckybox_set_single_workspace_kde() {
   fi
   duckybox_log "${tag}" "Virtual desktops reduced to 1"
 }
+
+# Install kitty config into the user home and make it the default terminal.
+duckybox_setup_kitty() {
+  local tag="$1" repo_root="$2" home_dir="${3:-${HOME}}"
+  local src="${repo_root}/configs/terminal/kitty.conf"
+  local dest_dir="${home_dir}/.config/kitty"
+  local dest="${dest_dir}/kitty.conf"
+
+  if [[ ! -f "${src}" ]]; then
+    duckybox_log "${tag}" "kitty.conf missing in repo; skipping"
+    return 0
+  fi
+
+  mkdir -p "${dest_dir}"
+  duckybox_backup "${dest}"
+  cp -f "${src}" "${dest}"
+  duckybox_log "${tag}" "Kitty theme installed (${dest}, opacity 0.82)"
+
+  if ! command -v kitty >/dev/null 2>&1; then
+    duckybox_log "${tag}" "kitty binary not on PATH yet; default will be set at next login"
+    return 0
+  fi
+
+  # MATE preferred terminal.
+  if command -v gsettings >/dev/null 2>&1; then
+    gsettings set org.mate.applications-terminal exec 'kitty' 2>/dev/null || true
+    gsettings set org.mate.applications-terminal exec-arg '' 2>/dev/null || true
+  fi
+
+  # xdg-terminal-exec favourites list (Debian/Parrot).
+  mkdir -p "${home_dir}/.config"
+  printf 'kitty.desktop\n' > "${home_dir}/.config/xdg-terminals.list"
+}
