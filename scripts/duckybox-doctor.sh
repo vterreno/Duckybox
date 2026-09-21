@@ -170,20 +170,34 @@ esac
 section "Branding"
 # hicolor is what makes Icon=duckybox resolve under any icon theme.
 check "duck icon in hicolor" test -f /usr/share/icons/hicolor/48x48/apps/duckybox.png
-appletsrc="${HOME}/.config/plasma-org.kde.plasma.desktop-appletsrc"
-if [[ -f "${appletsrc}" ]]; then
-  if grep -q '^icon=duckybox$' "${appletsrc}"; then
-    printf '  plasma menu icon: duckybox\n'
+# Whether the name resolves at all: if it does not, the launcher falls back to
+# its stock icon, which on Parrot is the Parrot logo and looks like the theme
+# simply did nothing.
+for finder in kiconfinder6 kiconfinder5 kiconfinder; do
+  if command -v "${finder}" >/dev/null 2>&1; then
+    printf '  duckybox resolves to: %s\n' \
+      "$("${finder}" duckybox 2>/dev/null | head -n1 || echo 'nothing')"
+    break
+  fi
+done
+# The panel layout can come from a distro default rather than the home copy, so
+# report every file that could define it.
+for appletsrc in \
+  "${HOME}/.config/plasma-org.kde.plasma.desktop-appletsrc" \
+  /etc/xdg/plasma-org.kde.plasma.desktop-appletsrc; do
+  [[ -f "${appletsrc}" ]] || continue
+  if grep -qE '^icon=(duckybox|/usr/share/icons/duckybox/)' "${appletsrc}"; then
+    printf '  plasma menu icon in %s: duckybox\n' "${appletsrc}"
   else
-    printf '  plasma menu icon: not set to duckybox\n'
-    # Whatever icon the launcher is pointing at instead, so a distro-specific
-    # name shows up rather than staying a mystery.
-    printf '  icon= values in the panel: %s\n' \
+    printf '  plasma menu icon in %s: not ours\n' "${appletsrc}"
+    # Whatever icon the launcher points at instead, so a distro-specific name
+    # shows up rather than staying a mystery.
+    printf '    icon= values: %s\n' \
       "$(sed -n 's/^icon=//p' "${appletsrc}" | sort -u | tr '\n' ' ')"
-    printf '  panel plugins: %s\n' \
+    printf '    panel plugins: %s\n' \
       "$(sed -n 's/^plugin=//p' "${appletsrc}" | sort -u | tr '\n' ' ')"
   fi
-fi
+done
 
 section "Boot chain"
 check "Plymouth theme dir" test -d /usr/share/plymouth/themes/duckybox

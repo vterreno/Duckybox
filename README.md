@@ -117,6 +117,8 @@ Plasma rewrites its configuration when a session ends, so edits made while a ses
 /opt/duckybox/apply-desktop.sh kde      # or force one
 ```
 
+The panel's menu button is the one piece that needs the panel to be running: it is set through Plasma's own scripting API, the same path the icon picker uses, because the widget ids are assigned when the panel is built and Parrot ships the launcher pointing at a Parrot-branded icon. Run the command above from inside the Plasma session, not over SSH.
+
 ## Verify
 
 One command collects the whole report, including the install log tail:

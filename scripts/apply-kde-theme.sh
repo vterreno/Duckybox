@@ -31,8 +31,10 @@ pick_tool() {
 }
 
 KWRITE="$(pick_tool kwriteconfig6 kwriteconfig5 kwriteconfig || true)"
+KREAD="$(pick_tool kreadconfig6 kreadconfig5 kreadconfig || true)"
 QDBUS="$(pick_tool qdbus6 qdbus qdbus-qt6 qdbus-qt5 || true)"
 BALOOCTL="$(pick_tool balooctl6 balooctl || true)"
+KICONFINDER="$(pick_tool kiconfinder6 kiconfinder5 kiconfinder || true)"
 
 kwrite() {
   # kwrite <file> <group> <key> <value>
@@ -53,6 +55,19 @@ kwrite_nested() {
   done
   shift # past the --
   "${KWRITE}" --file "${file}" "${groups[@]}" --key "$1" "$2" 2>/dev/null || true
+}
+
+kread_nested() {
+  # kread_nested <file> <group>... -- <key>
+  [[ -n "${KREAD}" ]] || return 0
+  local file="$1"; shift
+  local -a groups=()
+  while [[ $# -gt 0 && "$1" != "--" ]]; do
+    groups+=(--group "$1")
+    shift
+  done
+  shift # past the --
+  "${KREAD}" --file "${file}" "${groups[@]}" --key "$1" 2>/dev/null || true
 }
 
 install_color_scheme() {
@@ -91,11 +106,59 @@ apply_icons_and_style() {
   cp -f "${REPO_ROOT}/configs/gtk/gtk-4.0/gtk.css" "${HOME_DIR}/.config/gtk-4.0/gtk.css"
 }
 
+# Distros rename the launcher widget, so match the family rather than one exact
+# plugin: kickoff is the standard menu, kicker the compact one, kickerdash the
+# full-screen dashboard. Shared by the config parser and the Plasma script.
+LAUNCHER_PLUGIN_RE='kickoff|kicker|kickerdash|simplemenu|menu11|launcher'
+
+# What to write into the launcher's icon key. A theme name is what the icon
+# picker itself would write, so prefer it, but only once it is known to resolve:
+# a name that does not resolve makes the launcher fall back to its stock icon,
+# which on Parrot is the Parrot logo and looks exactly like doing nothing.
+# An absolute path skips icon theme lookup altogether and IconItem accepts it.
+launcher_icon_value() {
+  # Only when it can be proved, hence kiconfinder rather than looking for the
+  # file: a PNG sitting in hicolor is not proof that the lookup finds it.
+  if [[ -n "${KICONFINDER}" ]]; then
+    local found
+    found="$("${KICONFINDER}" duckybox 2>/dev/null | head -n1)"
+    if [[ -n "${found}" && -f "${found}" ]]; then
+      printf 'duckybox'
+      return 0
+    fi
+    log "The icon name duckybox does not resolve; using an absolute path"
+  fi
+
+  local size
+  for size in 256 128 64 48; do
+    if [[ -f "/usr/share/icons/duckybox/duckybox-${size}.png" ]]; then
+      printf '/usr/share/icons/duckybox/duckybox-%s.png' "${size}"
+      return 0
+    fi
+  done
+  printf 'duckybox'
+}
+
+# Every file that can define the panel layout, user copy first. Plasma cascades
+# its config, so a distro-shipped layout lives outside the home directory and
+# the user's own file can have no applet at all until something is changed by
+# hand -- which is why looking only at the home copy can find no launcher.
+panel_config_sources() {
+  local f
+  for f in \
+    "${HOME_DIR}/.config/plasma-org.kde.plasma.desktop-appletsrc" \
+    /etc/xdg/plasma-org.kde.plasma.desktop-appletsrc \
+    /etc/skel/.config/plasma-org.kde.plasma.desktop-appletsrc; do
+    [[ -f "${f}" ]] && printf '%s\n' "${f}"
+  done
+  return 0
+}
+
 # Print "<containment> <applet>" for every application launcher in the panel.
 # The ids are assigned when the panel is built, so they have to be read from
 # the config rather than assumed.
 find_launcher_applets() {
-  awk '
+  awk -v re="${LAUNCHER_PLUGIN_RE}" '
     /^\[/ {
       if ($0 ~ /^\[Containments\]\[[0-9]+\]\[Applets\]\[[0-9]+\]$/) {
         c = $0; sub(/^\[Containments\]\[/, "", c); sub(/\].*$/, "", c)
@@ -106,10 +169,7 @@ find_launcher_applets() {
       }
       next
     }
-    # Distros rename the launcher widget, so match the family rather than one
-    # exact plugin. kickoff is the standard menu, kicker the compact one,
-    # kickerdash the full-screen dashboard.
-    /^plugin=.*(kickoff|kicker|kickerdash|simplemenu|menu11|launcher)/ {
+    $0 ~ ("^plugin=.*(" re ")") {
       if (cur_c != "") print cur_c, cur_a
     }
   ' "$1"
@@ -146,24 +206,83 @@ stop_plasmashell() {
   return 0
 }
 
-apply_launcher_icon() {
+# A failed icon lookup is remembered, so a name that was missing when the panel
+# first drew stays missing until this cache is gone.
+purge_icon_cache() {
+  rm -f "${HOME_DIR}/.cache/icon-cache.kcache" 2>/dev/null || true
+}
+
+# Set the icon through Plasma's own scripting API. This is the mechanism the
+# icon picker uses, so it needs no applet ids, cannot lose a race against
+# plasmashell rewriting its config, and works even when the layout comes from a
+# distro default outside the home directory. Prints every widget it saw, which
+# is the only way to learn the plugin name of a launcher we do not recognise.
+set_launcher_icon_live() {
+  local value="$1"
+  [[ -n "${QDBUS}" ]] || return 1
+  pgrep -x plasmashell >/dev/null 2>&1 || return 1
+
+  local script result
+  script="$(cat <<JS
+var value = "${value}";
+var re = /${LAUNCHER_PLUGIN_RE}/;
+var seen = [];
+var changed = 0;
+for (var i = 0; i < panelIds.length; i++) {
+    var panel = panelById(panelIds[i]);
+    for (var j = 0; j < panel.widgetIds.length; j++) {
+        var widget = panel.widgetById(panel.widgetIds[j]);
+        seen.push(widget.type);
+        if (re.test(widget.type)) {
+            widget.currentConfigGroup = ["General"];
+            widget.writeConfig("icon", value);
+            widget.reloadConfig();
+            changed++;
+        }
+    }
+}
+print("widgets: " + seen.join(" "));
+print("changed: " + changed);
+JS
+)"
+
+  result="$("${QDBUS}" org.kde.plasmashell /PlasmaShell \
+    org.kde.PlasmaShell.evaluateScript "${script}" 2>/dev/null || true)"
+  [[ -n "${result}" ]] || return 1
+
+  local line
+  while IFS= read -r line; do
+    [[ -n "${line}" ]] && log "Plasma script — ${line}"
+  done <<<"${result}"
+
+  grep -q '^changed: [1-9]' <<<"${result}"
+}
+
+# Fallback for when plasmashell is not on the bus: edit the config file itself.
+set_launcher_icon_in_config() {
+  local value="$1"
   local cfg="${HOME_DIR}/.config/plasma-org.kde.plasma.desktop-appletsrc"
-  if [[ ! -f "${cfg}" ]]; then
-    log "No panel config yet; re-run after the first Plasma login for the menu icon"
-    return 0
-  fi
 
   local -a targets=()
-  local containment applet
-  while read -r containment applet; do
-    [[ -n "${containment}" ]] || continue
-    targets+=("${containment} ${applet}")
-  done < <(find_launcher_applets "${cfg}")
+  local src containment applet
+  while IFS= read -r src; do
+    while read -r containment applet; do
+      [[ -n "${containment}" ]] || continue
+      targets+=("${containment} ${applet}")
+    done < <(find_launcher_applets "${src}")
+    # Ids are per layout, so stop at the first file that defines one.
+    if [[ "${#targets[@]}" -gt 0 ]]; then
+      log "Launcher found in ${src}"
+      break
+    fi
+  done < <(panel_config_sources)
 
   if [[ "${#targets[@]}" -eq 0 ]]; then
-    log "No application launcher recognised in the panel; menu icon left alone"
-    log "Panel plugins present: $(list_panel_plugins "${cfg}")"
-    return 0
+    log "No application launcher recognised; menu icon left alone"
+    while IFS= read -r src; do
+      log "Plugins in ${src}: $(list_panel_plugins "${src}")"
+    done < <(panel_config_sources)
+    return 1
   fi
 
   # Order matters here. plasmashell keeps this file in memory and flushes it on
@@ -177,22 +296,54 @@ apply_launcher_icon() {
   fi
 
   duckybox_backup "${cfg}"
-  local pair
+  local pair wrote=0 readback
   for pair in "${targets[@]}"; do
     containment="${pair%% *}"
     applet="${pair##* }"
-    # Parrot's launcher names a Parrot-branded icon, so point it at ours
-    # explicitly rather than hoping the active icon theme carries that name.
     kwrite_nested "${cfg}" \
       Containments "${containment}" Applets "${applet}" Configuration General \
-      -- icon duckybox
-    log "Menu icon set on containment ${containment}, applet ${applet}"
+      -- icon "${value}"
+    readback="$(kread_nested "${cfg}" \
+      Containments "${containment}" Applets "${applet}" Configuration General \
+      -- icon)"
+    if [[ "${readback}" == "${value}" ]]; then
+      log "Menu icon set on containment ${containment}, applet ${applet}"
+      wrote=$((wrote + 1))
+    else
+      log "Write did not stick on containment ${containment}, applet ${applet} (read back: ${readback:-empty})"
+    fi
   done
 
   if (( restarted == 1 )); then
     log "Starting plasmashell again"
     (setsid plasmashell >/dev/null 2>&1 &) || true
   fi
+
+  (( wrote > 0 ))
+}
+
+apply_launcher_icon() {
+  local value
+  value="$(launcher_icon_value)"
+  log "Menu icon value: ${value}"
+  purge_icon_cache
+
+  if set_launcher_icon_live "${value}"; then
+    log "Menu icon applied through the Plasma scripting API"
+    # A name is resolved through the icon cache we just deleted, and the running
+    # plasmashell still has the old one mapped, so restart it to look again.
+    # Safe in this order: the value is already in plasmashell's own config, so
+    # the copy it flushes on the way out is ours.
+    if [[ "${value}" != /* ]] && stop_plasmashell; then
+      purge_icon_cache
+      log "Restarting plasmashell so the icon is looked up again"
+      (setsid plasmashell >/dev/null 2>&1 &) || true
+    fi
+    return 0
+  fi
+
+  log "Plasma scripting did not set the icon; editing the panel config instead"
+  set_launcher_icon_in_config "${value}" || true
 }
 
 apply_window_decorations() {
