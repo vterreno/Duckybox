@@ -1,20 +1,30 @@
-/* Turfbox GTK4 overrides — orange accent on dark */
+/* Duckybox GTK4 overrides — violet accent on dark */
 
-@define-color turfbox_bg #0D1117;
-@define-color turfbox_fg #E8E8E8;
-@define-color turfbox_accent #FF6A00;
+@define-color duckybox_bg #12071F;
+@define-color duckybox_fg #EDE9FE;
+@define-color duckybox_accent #7C3AED;
+@define-color duckybox_accent_hover #A78BFA;
+
+@define-color accent_bg_color #7C3AED;
+@define-color accent_fg_color #EDE9FE;
+@define-color accent_color #A78BFA;
 
 window {
-  background-color: @turfbox_bg;
-  color: @turfbox_fg;
+  background-color: @duckybox_bg;
+  color: @duckybox_fg;
 }
 
 headerbar {
-  background-color: #131820;
-  color: @turfbox_fg;
+  background-color: #1C0B2E;
+  color: @duckybox_fg;
 }
 
 button.suggested-action {
-  background-color: @turfbox_accent;
-  color: @turfbox_bg;
+  background-color: @duckybox_accent;
+  color: @duckybox_fg;
+}
+
+button.suggested-action:hover {
+  background-color: @duckybox_accent_hover;
+  color: @duckybox_bg;
 }

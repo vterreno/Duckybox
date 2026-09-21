@@ -1,12 +1,15 @@
-# Turfbox mate-terminal color profile (dconf load path)
+# Duckybox mate-terminal color profile (dconf load path)
 # Loaded into /org/mate/terminal/profiles/default/
 
 [/]
-background-color='#0D1117'
-foreground-color='#E8E8E8'
-palette=['#0D1117', '#FF4D4D', '#7CB342', '#FF8C1A', '#42A5F5', '#AB47BC', '#26C6DA', '#E8E8E8', '#546E7A', '#FF6A00', '#9CCC65', '#FFB74D', '#64B5F6', '#CE93D8', '#4DD0E1', '#FFFFFF']
+background-color='#12071F'
+foreground-color='#EDE9FE'
+palette=['#12071F', '#FF5370', '#7CB342', '#FBBF24', '#60A5FA', '#A78BFA', '#22D3EE', '#EDE9FE', '#4C3A63', '#FF7A93', '#9CCC65', '#FCD34D', '#93C5FD', '#C4B5FD', '#67E8F9', '#FFFFFF']
 use-theme-colors=false
 bold-color-same-as-fg=true
+bold-is-bright=true
 use-system-font=false
 font='Monospace 11'
 scrollback-unlimited=true
+cursor-shape='block'
+cursor-blink-mode='off'

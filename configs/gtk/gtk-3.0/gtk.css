@@ -1,48 +1,71 @@
-/* Turfbox GTK3 overrides — orange accent on dark */
+/* Duckybox GTK3 overrides — violet accent on dark
+ * Applied on top of the compiled Duckybox theme as a safety net for apps
+ * that ignore the theme's accent colour. */
 
-@define-color turfbox_bg #0D1117;
-@define-color turfbox_fg #E8E8E8;
-@define-color turfbox_accent #FF6A00;
-@define-color turfbox_accent_hover #FF8C1A;
+@define-color duckybox_bg #12071F;
+@define-color duckybox_bg_alt #1C0B2E;
+@define-color duckybox_fg #EDE9FE;
+@define-color duckybox_brand #4B0E8F;
+@define-color duckybox_accent #7C3AED;
+@define-color duckybox_accent_hover #A78BFA;
 
 window,
 .background {
-  background-color: @turfbox_bg;
-  color: @turfbox_fg;
+  background-color: @duckybox_bg;
+  color: @duckybox_fg;
 }
 
 headerbar,
 .titlebar {
   background-image: none;
-  background-color: #131820;
-  color: @turfbox_fg;
-  border-bottom: 1px solid @turfbox_accent;
+  background-color: @duckybox_bg_alt;
+  color: @duckybox_fg;
+  border-bottom: 1px solid @duckybox_accent;
 }
 
 button:checked,
 button.suggested-action,
 .button.suggested-action {
   background-image: none;
-  background-color: @turfbox_accent;
-  color: @turfbox_bg;
+  background-color: @duckybox_accent;
+  color: @duckybox_fg;
 }
 
 button:checked:hover,
 button.suggested-action:hover {
-  background-color: @turfbox_accent_hover;
+  background-color: @duckybox_accent_hover;
+  color: @duckybox_bg;
 }
 
 selection,
 *:selected {
-  background-color: @turfbox_accent;
-  color: @turfbox_bg;
+  background-color: @duckybox_accent;
+  color: @duckybox_fg;
 }
 
 progressbar trough progress,
-progressbar.horizontal trough progress {
-  background-color: @turfbox_accent;
+progressbar.horizontal trough progress,
+levelbar block.filled {
+  background-color: @duckybox_accent;
+}
+
+switch:checked,
+checkbutton check:checked,
+radiobutton radio:checked {
+  background-color: @duckybox_accent;
+  border-color: @duckybox_accent;
 }
 
 notebook > header > tabs > tab:checked {
-  border-bottom: 2px solid @turfbox_accent;
+  border-bottom: 2px solid @duckybox_accent;
+}
+
+entry:focus,
+entry:focus-within {
+  border-color: @duckybox_accent;
+}
+
+link,
+*:link {
+  color: @duckybox_accent_hover;
 }

@@ -1,0 +1,87 @@
+# Duckybox Plymouth script — deep violet backdrop, duck mark, violet progress bar
+
+Window.SetBackgroundTopColor(0.110, 0.043, 0.180);    # #1C0B2E
+Window.SetBackgroundBottomColor(0.071, 0.027, 0.122); # #12071F
+
+screen_width = Window.GetWidth();
+screen_height = Window.GetHeight();
+
+logo.image = Image("logo.png");
+logo.sprite = Sprite(logo.image);
+logo.x = screen_width / 2 - logo.image.GetWidth() / 2;
+logo.y = screen_height / 2 - logo.image.GetHeight() / 2 - 30;
+logo.sprite.SetX(logo.x);
+logo.sprite.SetY(logo.y);
+logo.sprite.SetOpacity(0);
+
+bar_bg.image = Image("progress_bg.png");
+bar_fg.image = Image("progress_fg.png");
+bar_bg.sprite = Sprite(bar_bg.image);
+bar_fg.sprite = Sprite();
+
+bar.x = screen_width / 2 - bar_bg.image.GetWidth() / 2;
+bar.y = logo.y + logo.image.GetHeight() + 48;
+bar_bg.sprite.SetX(bar.x);
+bar_bg.sprite.SetY(bar.y);
+bar_fg.sprite.SetX(bar.x);
+bar_fg.sprite.SetY(bar.y);
+
+global.frame = 0;
+global.fade = 0.0;
+global.max_progress = 0.0;
+
+fun update_progress_bar(progress) {
+  if (progress < 0.0) progress = 0.0;
+  if (progress > 1.0) progress = 1.0;
+
+  # Never let the bar travel backwards
+  if (progress < global.max_progress) progress = global.max_progress;
+  global.max_progress = progress;
+
+  width = bar_fg.image.GetWidth() * progress;
+  if (width < 1) width = 1;
+
+  bar_fg.sprite.SetImage(bar_fg.image.Scale(width, bar_fg.image.GetHeight()));
+}
+
+fun refresh_callback() {
+  global.frame++;
+
+  # Fade the logo in over roughly one second at 50 fps
+  if (global.fade < 1.0) {
+    global.fade = global.frame / 50.0;
+    if (global.fade > 1.0) global.fade = 1.0;
+    logo.sprite.SetOpacity(global.fade);
+  }
+}
+
+fun progress_callback(duration, progress) {
+  update_progress_bar(progress);
+}
+
+fun display_password_callback(prompt, bullets) {
+  prompt_text.image = Image.Text(prompt, 0.93, 0.91, 1.0);
+  prompt_text.sprite = Sprite(prompt_text.image);
+  prompt_text.sprite.SetX(screen_width / 2 - prompt_text.image.GetWidth() / 2);
+  prompt_text.sprite.SetY(bar.y + 40);
+
+  bullet.image = Image("bullet.png");
+  total_width = bullets * (bullet.image.GetWidth() + 6);
+  start_x = screen_width / 2 - total_width / 2;
+
+  for (i = 0; i < bullets; i++) {
+    dot[i].sprite = Sprite(bullet.image);
+    dot[i].sprite.SetX(start_x + i * (bullet.image.GetWidth() + 6));
+    dot[i].sprite.SetY(bar.y + 76);
+  }
+}
+
+fun display_normal_callback() {
+  prompt_text.sprite = NULL;
+  dot = NULL;
+}
+
+Plymouth.SetRefreshFunction(refresh_callback);
+Plymouth.SetBootProgressFunction(progress_callback);
+Plymouth.SetDisplayPasswordFunction(display_password_callback);
+Plymouth.SetDisplayNormalFunction(display_normal_callback);
